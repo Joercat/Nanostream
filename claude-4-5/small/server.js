@@ -16,7 +16,7 @@ const io = socketIo(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const PHP_DB_ENDPOINT = process.env.PHP_DB_ENDPOINT || 'http://your-infinityfree-site.com/db_connector.php';
+const PHP_DB_ENDPOINT = process.env.PHP_DB_ENDPOINT || 'http://nigel.kesug.com/db.php';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
