@@ -1,0 +1,136 @@
+/* Custom animations and styles for NanoStream */
+
+/* Fade in animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Custom scrollbar for chat */
+#chat-messages::-webkit-scrollbar {
+    width: 8px;
+}
+
+#chat-messages::-webkit-scrollbar-track {
+    background: #374151;
+    border-radius: 4px;
+}
+
+#chat-messages::-webkit-scrollbar-thumb {
+    background: #6b7280;
+    border-radius: 4px;
+}
+
+#chat-messages::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* Video container responsive styles */
+video {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* Mobile-first responsive design */
+@media (max-width: 1024px) {
+    #streamer-view .flex-col,
+    #viewer-view .flex-col {
+        height: auto;
+    }
+    
+    #chat-panel-streamer,
+    #chat-panel-viewer {
+        height: 40vh;
+        border-top: 1px solid #374151;
+    }
+}
+
+/* Hover effects for interactive elements */
+button {
+    transition: all 0.2s ease;
+}
+
+button:active {
+    transform: scale(0.95);
+}
+
+/* Focus styles for accessibility */
+input:focus,
+button:focus {
+    outline: none;
+    ring: 2px;
+    ring-offset: 2px;
+    ring-offset-color: #111827;
+}
+
+/* Stream status pulsing animation */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Badge styles */
+.bg-gradient-to-r {
+    background-image: linear-gradient(to right, var(--tw-gradient-stops));
+}
+
+/* Card shadow effects */
+.shadow-2xl {
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+/* Smooth transitions for role switching */
+.hidden {
+    display: none !important;
+}
+
+/* Message styling */
+#chat-messages > div {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Loading states */
+.loading {
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+/* Connection status indicators */
+.connection-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.connection-status.connected {
+    background-color: #10b981;
+}
+
+.connection-status.disconnected {
+    background-color: #ef4444;
+}
+
+.connection-status.connecting {
+    background-color: #f59e0b;
+    animation: pulse 1s infinite;
+}
