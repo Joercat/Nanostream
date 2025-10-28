@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NanoStream - Low Latency Live Streaming</title>
+  
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       EXTERNAL DEPENDENCIES
+       ═══════════════════════════════════════════════════════════════════════ -->
+  
+  <!-- Tailwind CSS - Latest CDN for all styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Socket.io Client - For WebRTC signaling and chat -->
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  
+  <!-- Custom Tailwind Configuration -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'stream-dark': '#18181b',
+            'stream-darker': '#0e0e10',
+            'stream-card': '#1f1f23',
+            'stream-border': '#2d2d31',
+            'stream-accent': '#a855f7',
+            'stream-accent-hover': '#9333ea',
+            'stream-text': '#f9f9f9',
+            'stream-text-muted': '#adadb8',
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Custom Styles for animations and special cases -->
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════════
+         GLOBAL STYLES & ANIMATIONS
+         ═══════════════════════════════════════════════════════════════════════ */
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #18181b;
+      color: #f9f9f9;
+      overflow-x: hidden;
+    }
+
+    /* Smooth scrolling for chat */
+    .chat-container {
+      scroll-behavior: smooth;
+    }
+
+    /* Custom scrollbar */
+    .chat-container::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .chat-container::-webkit-scrollbar-track {
+      background: #1f1f23;
+    }
+
+    .chat-container::-webkit-scrollbar-thumb {
+      background: #3f3f46;
+      border-radius: 3px;
+    }
+
+    .chat-container::-webkit-scrollbar-thumb:hover {
+      background: #52525b;
+    }
+
+    /* Pulse animation for live indicator */
+    @keyframes pulse-live {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 0.7;
+        transform: scale(1.05);
+      }
+    }
+
+    .live-pulse {
+      animation: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    /* Fade in animation */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .fade-in {
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    /* Loading spinner */
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .spinner {
+      animation: spin 1s linear infinite;
+    }
+
+    /* Video element styling */
+    video {
+      background: #000;
+      object-fit: contain;
+    }
+
+    /* Hide video controls on mobile for cleaner look */
+    video::-webkit-media-controls {
+      display: none !important;
+    }
+
+    /* Gradient text effect */
+    .gradient-text {
+      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Button press effect */
+    .btn-press:active {
+      transform: scale(0.98);
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 9999;
+      animation: slideInRight 0.3s ease-out;
+    }
+
+    @keyframes slideInRight {
+      from {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    /* Mobile optimization */
+    @media (max-width: 768px) {
+      .mobile-full-height {
+        height: calc(100vh - 64px);
+      }
+    }
+
+    /* Connection status indicator */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status-connected {
+      background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
+    }
+
+    .status-disconnected {
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+    }
+
+    /* Viewer count badge */
+    .viewer-badge {
+      background: rgba(168, 85, 247, 0.2);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+    }
+  </style>
+</head>
+
+<body class="bg-stream-dark text-stream-text">
+  
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MAIN APPLICATION CONTAINER
+       ═══════════════════════════════════════════════════════════════════════ -->
+  
+  <div id="app" class="min-h-screen">
+    
+    <!-- ─────────────────────────────────────────────────────────────────────
+         SCREEN 1: JOIN/SPLASH SCREEN
+         Initial screen where users enter Room ID and Username
+         ───────────────────────────────────────────────────────────────────── -->
+    
+    <div id="join-screen" class="min-h-screen flex items-center justify-center p-4">
+      <div class="w-full max-w-md fade-in">
+        
+        <!-- Logo/Header -->
+        <div class="text-center mb-8">
+          <h1 class="text-5xl font-bold mb-2 gradient-text">NanoStream</h1>
+          <p class="text-stream-text-muted text-sm">Low-Latency Live Streaming</p>
+          <div class="flex items-center justify-center gap-2 mt-4">
+            <span class="status-dot status-connected" id="connection-status"></span>
+            <span class="text-xs text-stream-text-muted" id="connection-text">Connecting...</span>
+          </div>
+        </div>
+
+        <!-- Join Form -->
+        <div class="bg-stream-card rounded-2xl p-8 shadow-2xl border border-stream-border">
+          
+          <!-- Room ID Input -->
+          <div class="mb-6">
+            <label class="block text-sm font-medium mb-2 text-stream-text-muted">
+              Room ID
+            </label>
+            <input 
+              type="text" 
+              id="room-id-input" 
+              placeholder="stream-channel-1"
+              class="w-full px-4 py-3 bg-stream-darker border border-stream-border rounded-xl focus:outline-none focus:ring-2 focus:ring-stream-accent focus:border-transparent text-stream-text placeholder-gray-600 transition"
+              autocomplete="off"
+            />
+          </div>
+
+          <!-- Username Input -->
+          <div class="mb-6">
+            <label class="block text-sm font-medium mb-2 text-stream-text-muted">
+              Username
+            </label>
+            <input 
+              type="text" 
+              id="username-input" 
+              placeholder="Viewer_99"
+              class="w-full px-4 py-3 bg-stream-darker border border-stream-border rounded-xl focus:outline-none focus:ring-2 focus:ring-stream-accent focus:border-transparent text-stream-text placeholder-gray-600 transition"
+              autocomplete="off"
+            />
+          </div>
+
+          <!-- Join Button -->
+          <button 
+            id="join-button"
+            class="w-full bg-stream-accent hover:bg-stream-accent-hover text-white font-semibold py-3 px-6 rounded-xl transition transform btn-press focus:outline-none focus:ring-2 focus:ring-stream-accent focus:ring-offset-2 focus:ring-offset-stream-card disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Join Stream
+          </button>
+
+          <!-- Info Text -->
+          <p class="text-xs text-stream-text-muted mt-4 text-center">
+            First to join becomes the streamer
+          </p>
+        </div>
+
+        <!-- Feature List -->
+        <div class="mt-8 grid grid-cols-3 gap-4 text-center">
+          <div class="bg-stream-card rounded-xl p-4 border border-stream-border">
+            <div class="text-2xl mb-1">⚡</div>
+            <div class="text-xs text-stream-text-muted">Sub-second<br>Latency</div>
+          </div>
+          <div class="bg-stream-card rounded-xl p-4 border border-stream-border">
+            <div class="text-2xl mb-1">🎥</div>
+            <div class="text-xs text-stream-text-muted">WebRTC<br>Streaming</div>
+          </div>
+          <div class="bg-stream-card rounded-xl p-4 border border-stream-border">
+            <div class="text-2xl mb-1">💬</div>
+            <div class="text-xs text-stream-text-muted">Real-time<br>Chat</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         SCREEN 2: STREAMER UI
+         Interface for the broadcaster with local video and controls
+         ───────────────────────────────────────────────────────────────────── -->
+    
+    <div id="streamer-screen" class="hidden">
+      
+      <!-- Top Navigation Bar -->
+      <nav class="bg-stream-darker border-b border-stream-border px-4 py-3">
+        <div class="flex items-center justify-between max-w-7xl mx-auto">
+          <div class="flex items-center gap-3">
+            <h2 class="text-xl font-bold gradient-text">NanoStream</h2>
+            <span class="text-sm text-stream-text-muted" id="streamer-room-id"></span>
+          </div>
+          <div class="flex items-center gap-4">
+            <!-- Viewer Count Badge -->
+            <div class="viewer-badge px-3 py-1 rounded-full flex items-center gap-2">
+              <svg class="w-4 h-4 text-stream-accent" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-sm font-semibold" id="viewer-count">0</span>
+            </div>
+            <!-- Live Indicator -->
+            <div id="live-indicator" class="hidden px-3 py-1 bg-red-600 rounded-full flex items-center gap-2 live-pulse">
+              <span class="w-2 h-2 bg-white rounded-full"></span>
+              <span class="text-sm font-bold">LIVE</span>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Main Content Area -->
+      <div class="flex flex-col lg:flex-row h-[calc(100vh-64px)]">
+        
+        <!-- Video Section -->
+        <div class="flex-1 bg-black relative flex items-center justify-center">
+          
+          <!-- Local Video Preview -->
+          <video 
+            id="streamer-video" 
+            autoplay 
+            muted 
+            playsinline
+            class="w-full h-full object-contain"
+          ></video>
+
+          <!-- Overlay Message (before going live) -->
+          <div id="streamer-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-stream-darker bg-opacity-90">
+            <div class="text-center p-8">
+              <div class="text-6xl mb-4">🎥</div>
+              <h3 class="text-2xl font-bold mb-2">Ready to Stream</h3>
+              <p class="text-stream-text-muted mb-6">Click "Go Live" to start broadcasting</p>
+              <button 
+                id="go-live-button"
+                class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-xl transition transform btn-press focus:outline-none focus:ring-2 focus:ring-red-500"
+              >
+                🔴 Go Live
+              </button>
+            </div>
+          </div>
+
+          <!-- Bottom Control Bar (when live) -->
+          <div id="streamer-controls" class="hidden absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black to-transparent p-6">
+            <div class="flex items-center justify-center gap-4">
+              <button 
+                id="end-stream-button"
+                class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-6 rounded-xl transition transform btn-press focus:outline-none"
+              >
+                ⏹️ End Stream
+              </button>
+            </div>
+          </div>
+
+          <!-- Username Display -->
+          <div class="absolute top-4 left-4 bg-black bg-opacity-60 px-3 py-2 rounded-lg">
+            <p class="text-sm font-medium" id="streamer-username-display"></p>
+          </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="lg:w-96 bg-stream-card border-t lg:border-t-0 lg:border-l border-stream-border flex flex-col h-[400px] lg:h-full">
+          
+          <!-- Chat Header -->
+          <div class="px-4 py-3 border-b border-stream-border">
+            <h3 class="font-semibold text-sm uppercase tracking-wide text-stream-text-muted">Stream Chat</h3>
+          </div>
+
+          <!-- Chat Messages -->
+          <div id="streamer-chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 chat-container">
+            <div class="text-center text-stream-text-muted text-sm py-8">
+              Welcome to the chat! 💬
+            </div>
+          </div>
+
+          <!-- Chat Input -->
+          <div class="p-4 border-t border-stream-border">
+            <div class="flex gap-2">
+              <input 
+                type="text" 
+                id="streamer-chat-input"
+                placeholder="Send a message..."
+                class="flex-1 px-4 py-2 bg-stream-darker border border-stream-border rounded-xl focus:outline-none focus:ring-2 focus:ring-stream-accent text-sm"
+                maxlength="200"
+              />
+              <button 
+                id="streamer-chat-send"
+                class="bg-stream-accent hover:bg-stream-accent-hover text-white px-4 py-2 rounded-xl transition btn-press focus:outline-none"
+              >
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         SCREEN 3: VIEWER UI
+         Interface for viewers watching the stream
+         ───────────────────────────────────────────────────────────────────── -->
+    
+    <div id="viewer-screen" class="hidden">
+      
+      <!-- Top Navigation Bar -->
+      <nav class="bg-stream-darker border-b border-stream-border px-4 py-3">
+        <div class="flex items-center justify-between max-w-7xl mx-auto">
+          <div class="flex items-center gap-3">
+            <h2 class="text-xl font-bold gradient-text">NanoStream</h2>
+            <span class="text-sm text-stream-text-muted" id="viewer-room-id"></span>
+          </div>
+          <div class="flex items-center gap-4">
+            <!-- Viewer Count -->
+            <div class="viewer-badge px-3 py-1 rounded-full flex items-center gap-2">
+              <svg class="w-4 h-4 text-stream-accent" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-sm font-semibold" id="viewer-count-display">0</span>
+            </div>
+            <!-- Live Indicator -->
+            <div id="viewer-live-indicator" class="hidden px-3 py-1 bg-red-600 rounded-full flex items-center gap-2 live-pulse">
+              <span class="w-2 h-2 bg-white rounded-full"></span>
+              <span class="text-sm font-bold">LIVE</span>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Main Content Area -->
+      <div class="flex flex-col lg:flex-row h-[calc(100vh-64px)]">
+        
+        <!-- Video Section -->
+        <div class="flex-1 bg-black relative flex items-center justify-center">
+          
+          <!-- Remote Video Stream -->
+          <video 
+            id="viewer-video" 
+            autoplay 
+            playsinline
+            class="w-full h-full object-contain"
+          ></video>
+
+          <!-- Loading/Offline Overlay -->
+          <div id="viewer-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-stream-darker">
+            <div class="text-center p-8">
+              <div class="spinner w-16 h-16 border-4 border-stream-accent border-t-transparent rounded-full mb-4 mx-auto"></div>
+              <h3 class="text-xl font-bold mb-2">Waiting for stream...</h3>
+              <p class="text-stream-text-muted text-sm">The streamer will appear here when they go live</p>
+            </div>
+          </div>
+
+          <!-- Streamer Info Overlay -->
+          <div class="absolute top-4 left-4 bg-black bg-opacity-60 px-3 py-2 rounded-lg">
+            <p class="text-sm font-medium" id="viewer-streamer-name">Loading...</p>
+          </div>
+
+          <!-- Connection Quality Indicator -->
+          <div id="connection-quality" class="hidden absolute top-4 right-4 bg-black bg-opacity-60 px-3 py-2 rounded-lg">
+            <div class="flex items-center gap-2">
+              <div class="status-dot status-connected"></div>
+              <span class="text-xs">Connected</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="lg:w-96 bg-stream-card border-t lg:border-t-0 lg:border-l border-stream-border flex flex-col h-[400px] lg:h-full">
+          
+          <!-- Chat Header -->
+          <div class="px-4 py-3 border-b border-stream-border">
+            <h3 class="font-semibold text-sm uppercase tracking-wide text-stream-text-muted">Live Chat</h3>
+          </div>
+
+          <!-- Chat Messages -->
+          <div id="viewer-chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 chat-container">
+            <div class="text-center text-stream-text-muted text-sm py-8">
+              Chat will appear here 💬
+            </div>
+          </div>
+
+          <!-- Chat Input -->
+          <div class="p-4 border-t border-stream-border">
+            <div class="flex gap-2">
+              <input 
+                type="text" 
+                id="viewer-chat-input"
+                placeholder="Send a message..."
+                class="flex-1 px-4 py-2 bg-stream-darker border border-stream-border rounded-xl focus:outline-none focus:ring-2 focus:ring-stream-accent text-sm"
+                maxlength="200"
+              />
+              <button 
+                id="viewer-chat-send"
+                class="bg-stream-accent hover:bg-stream-accent-hover text-white px-4 py-2 rounded-xl transition btn-press focus:outline-none"
+              >
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MAIN APPLICATION JAVASCRIPT
+       All client-side logic including WebRTC, Socket.io, and UI management
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <script>
+    // ═══════════════════════════════════════════════════════════════════════
+    // GLOBAL STATE MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const APP_STATE = {
+      socket: null,              // Socket.io connection
+      localStream: null,         // Local media stream (streamer only)
+      peerConnections: {},       // Map of viewer ID to RTCPeerConnection (streamer)
+      viewerPeerConnection: null, // Single peer connection (viewer)
+      role: null,                // 'streamer' or 'viewer'
+      roomId: null,              // Current room identifier
+      username: null,            // Current user's username
+      isLive: false,             // Whether stream is active
+      viewerCount: 0             // Current viewer count
+    };
+
+    // WebRTC Configuration - Using Google's public STUN server
+    const RTC_CONFIG = {
+      iceServers: [
+        {
+          urls: 'stun:stun.l.google.com:19302'
+        },
+        {
+          urls: 'stun:stun1.l.google.com:19302'
+        }
+      ],
+      iceCandidatePoolSize: 10
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DOM ELEMENT REFERENCES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const DOM = {
+      // Screens
+      joinScreen: document.getElementById('join-screen'),
+      streamerScreen: document.getElementById('streamer-screen'),
+      viewerScreen: document.getElementById('viewer-screen'),
+
+      // Join Screen Elements
+      roomIdInput: document.getElementById('room-id-input'),
+      usernameInput: document.getElementById('username-input'),
+      joinButton: document.getElementById('join-button'),
+      connectionStatus: document.getElementById('connection-status'),
+      connectionText: document.getElementById('connection-text'),
+
+      // Streamer Elements
+      streamerVideo: document.getElementById('streamer-video'),
+      streamerOverlay: document.getElementById('streamer-overlay'),
+      streamerControls: document.getElementById('streamer-controls'),
+      goLiveButton: document.getElementById('go-live-button'),
+      endStreamButton: document.getElementById('end-stream-button'),
+      viewerCountBadge: document.getElementById('viewer-count'),
+      liveIndicator: document.getElementById('live-indicator'),
+      streamerRoomId: document.getElementById('streamer-room-id'),
+      streamerUsernameDisplay: document.getElementById('streamer-username-display'),
+      streamerChatMessages: document.getElementById('streamer-chat-messages'),
+      streamerChatInput: document.getElementById('streamer-chat-input'),
+      streamerChatSend: document.getElementById('streamer-chat-send'),
+
+      // Viewer Elements
+      viewerVideo: document.getElementById('viewer-video'),
+      viewerOverlay: document.getElementById('viewer-overlay'),
+      viewerLiveIndicator: document.getElementById('viewer-live-indicator'),
+      viewerRoomId: document.getElementById('viewer-room-id'),
+      viewerStreamerName: document.getElementById('viewer-streamer-name'),
+      viewerCountDisplay: document.getElementById('viewer-count-display'),
+      viewerChatMessages: document.getElementById('viewer-chat-messages'),
+      viewerChatInput: document.getElementById('viewer-chat-input'),
+      viewerChatSend: document.getElementById('viewer-chat-send'),
+      connectionQuality: document.getElementById('connection-quality')
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INITIALIZATION
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Initialize the application when DOM is loaded
+     */
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('🚀 NanoStream initializing...');
+      
+      // Initialize Socket.io connection
+      initializeSocket();
+      
+      // Attach event listeners
+      attachEventListeners();
+      
+      // Set default values for testing (optional - remove in production)
+      DOM.roomIdInput.value = 'stream-' + Math.random().toString(36).substr(2, 6);
+      DOM.usernameInput.value = 'User_' + Math.random().toString(36).substr(2, 4);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SOCKET.IO CONNECTION MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Initialize Socket.io connection to the server
+     */
+    function initializeSocket() {
+      try {
+        APP_STATE.socket = io({
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionAttempts: 5
+        });
+
+        // Connection established
+        APP_STATE.socket.on('connect', () => {
+          console.log('✅ Connected to server:', APP_STATE.socket.id);
+          updateConnectionStatus(true);
+        });
+
+        // Connection lost
+        APP_STATE.socket.on('disconnect', (reason) => {
+          console.log('❌ Disconnected from server:', reason);
+          updateConnectionStatus(false);
+          showToast('Disconnected from server', 'error');
+        });
+
+        // Reconnection attempt
+        APP_STATE.socket.on('reconnect_attempt', (attemptNumber) => {
+          console.log(`🔄 Reconnection attempt ${attemptNumber}...`);
+          DOM.connectionText.textContent = `Reconnecting (${attemptNumber})...`;
+        });
+
+        // Successfully reconnected
+        APP_STATE.socket.on('reconnect', () => {
+          console.log('✅ Reconnected to server');
+          showToast('Reconnected to server', 'success');
+          
+          // Rejoin room if we were in one
+          if (APP_STATE.roomId && APP_STATE.username) {
+            joinRoom(APP_STATE.roomId, APP_STATE.username);
+          }
+        });
+
+        // Setup Socket.io event handlers
+        setupSocketHandlers();
+
+      } catch (error) {
+        console.error('❌ Socket initialization error:', error);
+        showToast('Failed to connect to server', 'error');
+      }
+    }
+
+    /**
+     * Update connection status indicator
+     */
+    function updateConnectionStatus(connected) {
+      if (connected) {
+        DOM.connectionStatus.className = 'status-dot status-connected';
+        DOM.connectionText.textContent = 'Connected';
+      } else {
+        DOM.connectionStatus.className = 'status-dot status-disconnected';
+        DOM.connectionText.textContent = 'Disconnected';
+      }
+    }
+
+    /**
+     * Setup all Socket.io event handlers
+     */
+    function setupSocketHandlers() {
+      
+      // ─────────────────────────────────────────────────────────────────────
+      // Role Assignment - Server tells us if we're streamer or viewer
+      // ─────────────────────────────────────────────────────────────────────
+      APP_STATE.socket.on('role-assigned', ({ role, roomId, username, viewerCount, streamerUsername }) => {
+        console.log(`🎭 Role assigned: ${role}`);
+        
+        APP_STATE.role = role;
+        APP_STATE.roomId = roomId;
+        APP_STATE.username = username;
+        APP_STATE.viewerCount = viewerCount;
+
+        // Show appropriate UI based on role
+        if (role === 'streamer') {
+          showStreamerUI();
+        } else {
+          showViewerUI(streamerUsername);
+        }
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Streamer-Specific Events
+      // ─────────────────────────────────────────────────────────────────────
+
+      // New viewer joined - create peer connection for them
+      APP_STATE.socket.on('new-viewer', async ({ viewerId, username, viewerCount }) => {
+        console.log(`👁️  New viewer: ${username} (${viewerId})`);
+        
+        APP_STATE.viewerCount = viewerCount;
+        updateViewerCount(viewerCount);
+        
+        // Create peer connection for this viewer if we're live
+        if (APP_STATE.isLive && APP_STATE.localStream) {
+          await createPeerConnectionForViewer(viewerId);
+        }
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Viewer-Specific Events
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Streamer went live - initiate connection
+      APP_STATE.socket.on('streamer-live', async ({ streamerId, streamerUsername }) => {
+        console.log(`🔴 Streamer is now live: ${streamerUsername}`);
+        
+        DOM.viewerStreamerName.textContent = streamerUsername;
+        DOM.viewerLiveIndicator.classList.remove('hidden');
+        
+        // Create peer connection to receive stream
+        await createViewerPeerConnection(streamerId);
+      });
+
+      // Stream ended
+      APP_STATE.socket.on('stream-ended', ({ message }) => {
+        console.log('⏹️  Stream ended:', message);
+        
+        showToast(message, 'info');
+        
+        if (APP_STATE.role === 'viewer') {
+          // Show offline overlay
+          DOM.viewerOverlay.classList.remove('hidden');
+          DOM.viewerLiveIndicator.classList.add('hidden');
+          DOM.connectionQuality.classList.add('hidden');
+          
+          // Close peer connection
+          if (APP_STATE.viewerPeerConnection) {
+            APP_STATE.viewerPeerConnection.close();
+            APP_STATE.viewerPeerConnection = null;
+          }
+        }
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // WebRTC Signaling Events
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Received offer from streamer (viewer receives this)
+      APP_STATE.socket.on('webrtc-offer', async ({ offer, streamerId }) => {
+        console.log('📥 Received offer from streamer');
+        
+        try {
+          if (!APP_STATE.viewerPeerConnection) {
+            await createViewerPeerConnection(streamerId);
+          }
+
+          await APP_STATE.viewerPeerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+          
+          // Create answer
+          const answer = await APP_STATE.viewerPeerConnection.createAnswer();
+          await APP_STATE.viewerPeerConnection.setLocalDescription(answer);
+          
+          // Send answer back to streamer
+          APP_STATE.socket.emit('webrtc-answer', {
+            answer: answer,
+            targetId: streamerId,
+            roomId: APP_STATE.roomId
+          });
+          
+          console.log('📤 Sent answer to streamer');
+          
+        } catch (error) {
+          console.error('❌ Error handling offer:', error);
+          showToast('Failed to connect to stream', 'error');
+        }
+      });
+
+      // Received answer from viewer (streamer receives this)
+      APP_STATE.socket.on('webrtc-answer', async ({ answer, viewerId }) => {
+        console.log('📥 Received answer from viewer:', viewerId);
+        
+        try {
+          const peerConnection = APP_STATE.peerConnections[viewerId];
+          if (peerConnection) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('✅ Set remote description for viewer:', viewerId);
+          }
+        } catch (error) {
+          console.error('❌ Error handling answer:', error);
+        }
+      });
+
+      // Received ICE candidate
+      APP_STATE.socket.on('webrtc-ice-candidate', async ({ candidate, fromId }) => {
+        console.log('🧊 Received ICE candidate from:', fromId);
+        
+        try {
+          // Determine which peer connection to use
+          let peerConnection;
+          
+          if (APP_STATE.role === 'streamer') {
+            peerConnection = APP_STATE.peerConnections[fromId];
+          } else {
+            peerConnection = APP_STATE.viewerPeerConnection;
+          }
+
+          if (peerConnection && candidate) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log('✅ Added ICE candidate');
+          }
+        } catch (error) {
+          console.error('❌ Error adding ICE candidate:', error);
+        }
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Chat Events
+      // ─────────────────────────────────────────────────────────────────────
+
+      APP_STATE.socket.on('chat-message', ({ username, message, timestamp, isSystem }) => {
+        addChatMessage(username, message, isSystem);
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Viewer Count Updates
+      // ─────────────────────────────────────────────────────────────────────
+
+      APP_STATE.socket.on('viewer-count-update', ({ count }) => {
+        APP_STATE.viewerCount = count;
+        updateViewerCount(count);
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Error Handling
+      // ─────────────────────────────────────────────────────────────────────
+
+      APP_STATE.socket.on('error', ({ message }) => {
+        console.error('❌ Server error:', message);
+        showToast(message, 'error');
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EVENT LISTENERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Attach all DOM event listeners
+     */
+    function attachEventListeners() {
+      
+      // Join button
+      DOM.joinButton.addEventListener('click', handleJoinClick);
+      
+      // Enter key in join inputs
+      DOM.roomIdInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleJoinClick();
+      });
+      DOM.usernameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleJoinClick();
+      });
+
+      // Streamer controls
+      DOM.goLiveButton.addEventListener('click', handleGoLive);
+      DOM.endStreamButton.addEventListener('click', handleEndStream);
+      
+      // Streamer chat
+      DOM.streamerChatSend.addEventListener('click', () => sendChatMessage('streamer'));
+      DOM.streamerChatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendChatMessage('streamer');
+      });
+
+      // Viewer chat
+      DOM.viewerChatSend.addEventListener('click', () => sendChatMessage('viewer'));
+      DOM.viewerChatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendChatMessage('viewer');
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ROOM MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Handle join button click
+     */
+    function handleJoinClick() {
+      const roomId = DOM.roomIdInput.value.trim();
+      const username = DOM.usernameInput.value.trim();
+
+      // Validation
+      if (!roomId) {
+        showToast('Please enter a Room ID', 'error');
+        DOM.roomIdInput.focus();
+        return;
+      }
+
+      if (!username) {
+        showToast('Please enter a Username', 'error');
+        DOM.usernameInput.focus();
+        return;
+      }
+
+      if (username.length < 2) {
+        showToast('Username must be at least 2 characters', 'error');
+        DOM.usernameInput.focus();
+        return;
+      }
+
+      if (!APP_STATE.socket || !APP_STATE.socket.connected) {
+        showToast('Not connected to server', 'error');
+        return;
+      }
+
+      // Join the room
+      joinRoom(roomId, username);
+    }
+
+    /**
+     * Join a room via Socket.io
+     */
+    function joinRoom(roomId, username) {
+      console.log(`🚪 Joining room: ${roomId} as ${username}`);
+      
+      DOM.joinButton.disabled = true;
+      DOM.joinButton.textContent = 'Joining...';
+
+      APP_STATE.socket.emit('join-room', {
+        roomId: roomId,
+        username: username
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // UI SCREEN MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Show streamer UI
+     */
+    function showStreamerUI() {
+      console.log('🎥 Showing streamer UI');
+      
+      DOM.joinScreen.classList.add('hidden');
+      DOM.viewerScreen.classList.add('hidden');
+      DOM.streamerScreen.classList.remove('hidden');
+
+      DOM.streamerRoomId.textContent = `Room: ${APP_STATE.roomId}`;
+      DOM.streamerUsernameDisplay.textContent = APP_STATE.username;
+      updateViewerCount(APP_STATE.viewerCount);
+      
+      showToast('You are the streamer! Click "Go Live" to start.', 'success');
+    }
+
+    /**
+     * Show viewer UI
+     */
+    function showViewerUI(streamerUsername) {
+      console.log('👁️  Showing viewer UI');
+      
+      DOM.joinScreen.classList.add('hidden');
+      DOM.streamerScreen.classList.add('hidden');
+      DOM.viewerScreen.classList.remove('hidden');
+
+      DOM.viewerRoomId.textContent = `Room: ${APP_STATE.roomId}`;
+      DOM.viewerStreamerName.textContent = streamerUsername || 'Loading...';
+      updateViewerCount(APP_STATE.viewerCount);
+      
+      showToast('Joined as viewer. Waiting for stream...', 'success');
+    }
+
+    /**
+     * Update viewer count display
+     */
+    function updateViewerCount(count) {
+      DOM.viewerCountBadge.textContent = count;
+      DOM.viewerCountDisplay.textContent = count;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STREAMER WEBRTC LOGIC
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Handle "Go Live" button click
+     */
+    async function handleGoLive() {
+      console.log('🔴 Going live...');
+      
+      DOM.goLiveButton.disabled = true;
+      DOM.goLiveButton.textContent = 'Starting...';
+
+      try {
+        // Request camera and microphone access
+        APP_STATE.localStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+
+        console.log('✅ Got local media stream');
+
+        // Display local stream
+        DOM.streamerVideo.srcObject = APP_STATE.localStream;
+
+        // Update UI
+        DOM.streamerOverlay.classList.add('hidden');
+        DOM.streamerControls.classList.remove('hidden');
+        DOM.liveIndicator.classList.remove('hidden');
+        APP_STATE.isLive = true;
+
+        // Notify server that we're live
+        APP_STATE.socket.emit('streamer-ready', {
+          roomId: APP_STATE.roomId
+        });
+
+        showToast('You are now LIVE!', 'success');
+
+      } catch (error) {
+        console.error('❌ Error getting media:', error);
+        
+        let errorMessage = 'Failed to access camera/microphone';
+        
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          errorMessage = 'Camera/microphone permission denied. Please allow access and try again.';
+        } else if (error.name === 'NotFoundError') {
+          errorMessage = 'No camera or microphone found.';
+        }
+
+        showToast(errorMessage, 'error');
+        
+        DOM.goLiveButton.disabled = false;
+        DOM.goLiveButton.textContent = '🔴 Go Live';
+      }
+    }
+
+    /**
+     * Create a peer connection for a specific viewer
+     */
+    async function createPeerConnectionForViewer(viewerId) {
+      console.log(`🔗 Creating peer connection for viewer: ${viewerId}`);
+
+      try {
+        // Create new RTCPeerConnection
+        const peerConnection = new RTCPeerConnection(RTC_CONFIG);
+        
+        // Add local stream tracks
+        APP_STATE.localStream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, APP_STATE.localStream);
+        });
+
+        // Handle ICE candidates
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.log('🧊 Sending ICE candidate to viewer:', viewerId);
+            APP_STATE.socket.emit('webrtc-ice-candidate', {
+              candidate: event.candidate,
+              targetId: viewerId,
+              roomId: APP_STATE.roomId
+            });
+          }
+        };
+
+        // Handle connection state changes
+        peerConnection.onconnectionstatechange = () => {
+          console.log(`Peer connection state (${viewerId}):`, peerConnection.connectionState);
+          
+          if (peerConnection.connectionState === 'failed' || 
+              peerConnection.connectionState === 'disconnected') {
+            // Clean up disconnected peer
+            delete APP_STATE.peerConnections[viewerId];
+          }
+        };
+
+        // Store peer connection
+        APP_STATE.peerConnections[viewerId] = peerConnection;
+
+        // Create and send offer
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        APP_STATE.socket.emit('webrtc-offer', {
+          offer: offer,
+          targetId: viewerId,
+          roomId: APP_STATE.roomId
+        });
+
+        console.log('📤 Sent offer to viewer:', viewerId);
+
+      } catch (error) {
+        console.error('❌ Error creating peer connection:', error);
+      }
+    }
+
+    /**
+     * Handle end stream button
+     */
+    function handleEndStream() {
+      console.log('⏹️  Ending stream...');
+
+      // Stop all tracks
+      if (APP_STATE.localStream) {
+        APP_STATE.localStream.getTracks().forEach(track => track.stop());
+        APP_STATE.localStream = null;
+      }
+
+      // Close all peer connections
+      Object.values(APP_STATE.peerConnections).forEach(pc => pc.close());
+      APP_STATE.peerConnections = {};
+
+      // Update UI
+      DOM.streamerVideo.srcObject = null;
+      DOM.streamerOverlay.classList.remove('hidden');
+      DOM.streamerControls.classList.add('hidden');
+      DOM.liveIndicator.classList.add('hidden');
+      DOM.goLiveButton.disabled = false;
+      DOM.goLiveButton.textContent = '🔴 Go Live';
+      APP_STATE.isLive = false;
+
+      // Notify server
+      APP_STATE.socket.emit('end-stream', {
+        roomId: APP_STATE.roomId
+      });
+
+      showToast('Stream ended', 'info');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VIEWER WEBRTC LOGIC
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Create peer connection for viewer to receive stream
+     */
+    async function createViewerPeerConnection(streamerId) {
+      console.log(`🔗 Creating peer connection to streamer: ${streamerId}`);
+
+      try {
+        // Create RTCPeerConnection
+        const peerConnection = new RTCPeerConnection(RTC_CONFIG);
+        APP_STATE.viewerPeerConnection = peerConnection;
+
+        // Handle incoming tracks
+        peerConnection.ontrack = (event) => {
+          console.log('📺 Received remote track:', event.track.kind);
+          
+          if (event.streams && event.streams[0]) {
+            DOM.viewerVideo.srcObject = event.streams[0];
+            DOM.viewerOverlay.classList.add('hidden');
+            DOM.connectionQuality.classList.remove('hidden');
+            showToast('Connected to stream!', 'success');
+          }
+        };
+
+        // Handle ICE candidates
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.log('🧊 Sending ICE candidate to streamer');
+            APP_STATE.socket.emit('webrtc-ice-candidate', {
+              candidate: event.candidate,
+              targetId: streamerId,
+              roomId: APP_STATE.roomId
+            });
+          }
+        };
+
+        // Handle connection state
+        peerConnection.onconnectionstatechange = () => {
+          console.log('Peer connection state:', peerConnection.connectionState);
+          
+          const qualityIndicator = DOM.connectionQuality.querySelector('.status-dot');
+          
+          switch (peerConnection.connectionState) {
+            case 'connected':
+              qualityIndicator.className = 'status-dot status-connected';
+              DOM.connectionQuality.querySelector('span').textContent = 'Connected';
+              break;
+            case 'disconnected':
+            case 'failed':
+              qualityIndicator.className = 'status-dot status-disconnected';
+              DOM.connectionQuality.querySelector('span').textContent = 'Disconnected';
+              showToast('Connection lost. Trying to reconnect...', 'error');
+              break;
+            case 'connecting':
+              DOM.connectionQuality.querySelector('span').textContent = 'Connecting...';
+              break;
+          }
+        };
+
+        // Handle ICE connection state
+        peerConnection.oniceconnectionstatechange = () => {
+          console.log('ICE connection state:', peerConnection.iceConnectionState);
+        };
+
+        console.log('✅ Peer connection created, waiting for offer...');
+
+      } catch (error) {
+        console.error('❌ Error creating viewer peer connection:', error);
+        showToast('Failed to connect to stream', 'error');
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CHAT FUNCTIONALITY
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Send a chat message
+     */
+    function sendChatMessage(role) {
+      const input = role === 'streamer' ? DOM.streamerChatInput : DOM.viewerChatInput;
+      const message = input.value.trim();
+
+      if (!message) return;
+
+      // Send to server
+      APP_STATE.socket.emit('chat-message', {
+        roomId: APP_STATE.roomId,
+        username: APP_STATE.username,
+        message: message
+      });
+
+      // Clear input
+      input.value = '';
+      input.focus();
+    }
+
+    /**
+     * Add a chat message to the UI
+     */
+    function addChatMessage(username, message, isSystem = false) {
+      const timestamp = new Date().toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+
+      // Create message element
+      const messageEl = document.createElement('div');
+      messageEl.className = 'fade-in';
+      
+      if (isSystem) {
+        messageEl.innerHTML = `
+          <div class="text-xs text-stream-text-muted text-center py-1">
+            ${message}
+          </div>
+        `;
+      } else {
+        const isOwnMessage = username === APP_STATE.username;
+        messageEl.innerHTML = `
+          <div class="flex flex-col gap-1">
+            <div class="flex items-baseline gap-2">
+              <span class="font-semibold text-sm ${isOwnMessage ? 'text-stream-accent' : 'text-violet-400'}">${username}</span>
+              <span class="text-xs text-stream-text-muted">${timestamp}</span>
+            </div>
+            <div class="text-sm text-stream-text break-words">${escapeHtml(message)}</div>
+          </div>
+        `;
+      }
+
+      // Add to appropriate chat container
+      const container = APP_STATE.role === 'streamer' ? 
+        DOM.streamerChatMessages : 
+        DOM.viewerChatMessages;
+      
+      container.appendChild(messageEl);
+      
+      // Auto-scroll to bottom
+      container.scrollTop = container.scrollHeight;
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     */
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // UTILITY FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Show a toast notification
+     */
+    function showToast(message, type = 'info') {
+      const colors = {
+        success: 'bg-green-600',
+        error: 'bg-red-600',
+        info: 'bg-stream-accent',
+        warning: 'bg-yellow-600'
+      };
+
+      const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+      };
+
+      const toast = document.createElement('div');
+      toast.className = `toast ${colors[type]} text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 max-w-sm`;
+      toast.innerHTML = `
+        <span class="text-xl">${icons[type]}</span>
+        <span class="text-sm font-medium">${message}</span>
+      `;
+
+      document.body.appendChild(toast);
+
+      // Remove after 4 seconds
+      setTimeout(() => {
+        toast.style.animation = 'slideInRight 0.3s ease-out reverse';
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ERROR HANDLING
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Handle unhandled errors
+    window.addEventListener('error', (event) => {
+      console.error('❌ Unhandled error:', event.error);
+    });
+
+    // Handle unhandled promise rejections
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error('❌ Unhandled promise rejection:', event.reason);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CLEANUP ON PAGE UNLOAD
+    // ═══════════════════════════════════════════════════════════════════════
+
+    window.addEventListener('beforeunload', () => {
+      // Stop local stream
+      if (APP_STATE.localStream) {
+        APP_STATE.localStream.getTracks().forEach(track => track.stop());
+      }
+
+      // Close all peer connections
+      Object.values(APP_STATE.peerConnections).forEach(pc => pc.close());
+      
+      if (APP_STATE.viewerPeerConnection) {
+        APP_STATE.viewerPeerConnection.close();
+      }
+
+      // Disconnect socket
+      if (APP_STATE.socket) {
+        APP_STATE.socket.disconnect();
+      }
+    });
+
+    console.log('✅ NanoStream client initialized');
+  </script>
+</body>
+</html>
