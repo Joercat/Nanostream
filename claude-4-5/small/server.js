@@ -1,473 +1,514 @@
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * NANOSTREAM - LOW-LATENCY WEBRTC STREAMING SERVER
- * ═══════════════════════════════════════════════════════════════════════════
- * 
- * PURPOSE: Handle WebRTC signaling, room management, and chat relay for a 
- *          minimalist Twitch-style streaming service.
- * 
- * ARCHITECTURE:
- * - Express serves the single index.html file
- * - Socket.io manages real-time signaling and chat
- * - Rooms object tracks streamer and viewers per room ID
- * 
- * FLOW:
- * 1. Client connects and joins a room
- * 2. First user becomes streamer, subsequent users are viewers
- * 3. Server relays WebRTC signaling messages (offer/answer/ICE)
- * 4. Server broadcasts chat messages to all room participants
- * ═══════════════════════════════════════════════════════════════════════════
- */
-
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SERVER INITIALIZATION
-// ═══════════════════════════════════════════════════════════════════════════
+const fetch = require('node-fetch');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "*", // Allow all origins for local development
+    origin: "*",
     methods: ["GET", "POST"]
   },
-  pingTimeout: 60000, // Increase timeout for stability
+  pingTimeout: 60000,
   pingInterval: 25000
 });
 
 const PORT = process.env.PORT || 3000;
+const PHP_DB_ENDPOINT = process.env.PHP_DB_ENDPOINT || 'http://your-infinityfree-site.com/db_connector.php';
 
-// Serve static files (our single index.html)
-app.use(express.static(path.join(__dirname)));
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Fallback route - serve index.html for all routes
-app.get('*', (req, res) => {
+app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ROOM MANAGEMENT DATA STRUCTURE
-// ═══════════════════════════════════════════════════════════════════════════
+const rooms = {};
+const userSockets = {};
+const socketToUser = {};
+const socketToRoom = {};
 
-/**
- * ROOMS OBJECT STRUCTURE:
- * {
- *   "room-id-1": {
- *     streamer: {
- *       socketId: "abc123",
- *       username: "Streamer_Name"
- *     },
- *     viewers: [
- *       { socketId: "def456", username: "Viewer_1" },
- *       { socketId: "ghi789", username: "Viewer_2" }
- *     ]
- *   }
- * }
- */
-let rooms = {};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UTILITY FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Get the current viewer count for a room
- * @param {string} roomId - The room identifier
- * @returns {number} Number of active viewers
- */
-const getViewerCount = (roomId) => {
-  if (!rooms[roomId]) return 0;
-  return rooms[roomId].viewers.length;
-};
-
-/**
- * Check if a room has an active streamer
- * @param {string} roomId - The room identifier
- * @returns {boolean} True if streamer exists
- */
-const hasStreamer = (roomId) => {
-  return rooms[roomId] && rooms[roomId].streamer !== null;
-};
-
-/**
- * Find which room a socket is in
- * @param {string} socketId - The socket identifier
- * @returns {string|null} Room ID or null if not found
- */
-const findRoomBySocket = (socketId) => {
-  for (const [roomId, room] of Object.entries(rooms)) {
-    if (room.streamer?.socketId === socketId) return roomId;
-    if (room.viewers.some(v => v.socketId === socketId)) return roomId;
-  }
-  return null;
-};
-
-/**
- * Remove a socket from its room
- * @param {string} socketId - The socket identifier
- * @returns {object|null} Removal result with room info
- */
-const removeSocketFromRoom = (socketId) => {
-  const roomId = findRoomBySocket(socketId);
-  if (!roomId) return null;
-
-  const room = rooms[roomId];
-  let wasStreamer = false;
-  let username = '';
-
-  // Check if disconnecting user is the streamer
-  if (room.streamer?.socketId === socketId) {
-    username = room.streamer.username;
-    room.streamer = null;
-    wasStreamer = true;
-  } else {
-    // Remove from viewers
-    const viewerIndex = room.viewers.findIndex(v => v.socketId === socketId);
-    if (viewerIndex !== -1) {
-      username = room.viewers[viewerIndex].username;
-      room.viewers.splice(viewerIndex, 1);
+async function dbQuery(action, params) {
+  try {
+    const response = await fetch(PHP_DB_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action, params })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Database query error:', error);
+    return { success: false, error: error.message };
   }
-
-  // Clean up empty rooms
-  if (!room.streamer && room.viewers.length === 0) {
-    delete rooms[roomId];
-  }
-
-  return { roomId, wasStreamer, username, viewerCount: getViewerCount(roomId) };
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SOCKET.IO EVENT HANDLERS
-// ═══════════════════════════════════════════════════════════════════════════
+}
 
 io.on('connection', (socket) => {
-  console.log(`🔌 New connection: ${socket.id}`);
+  console.log(`New connection: ${socket.id}`);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: join-room
-  // Handles initial room joining and role assignment
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('join-room', ({ roomId, username }) => {
-    try {
-      console.log(`👤 ${username} (${socket.id}) attempting to join room: ${roomId}`);
-
-      // Initialize room if it doesn't exist
-      if (!rooms[roomId]) {
-        rooms[roomId] = {
-          streamer: null,
-          viewers: []
-        };
-      }
-
-      // Join the Socket.io room
-      socket.join(roomId);
-
-      const room = rooms[roomId];
-      let role = 'viewer';
-
-      // Assign role based on current room state
-      if (!hasStreamer(roomId)) {
-        // First user becomes the streamer
-        room.streamer = {
-          socketId: socket.id,
-          username: username
-        };
-        role = 'streamer';
-        console.log(`🎥 ${username} is now the STREAMER for room ${roomId}`);
-      } else {
-        // Subsequent users are viewers
-        room.viewers.push({
-          socketId: socket.id,
-          username: username
-        });
-        console.log(`👁️  ${username} joined as VIEWER (${room.viewers.length} total viewers)`);
-      }
-
-      // Send role assignment to the connecting client
-      socket.emit('role-assigned', {
-        role: role,
-        roomId: roomId,
-        username: username,
-        viewerCount: getViewerCount(roomId),
-        streamerUsername: room.streamer?.username
+  socket.on('register', async (data) => {
+    const { username, password } = data;
+    
+    if (!username || !password) {
+      socket.emit('register-response', { 
+        success: false, 
+        error: 'Username and password are required' 
       });
+      return;
+    }
 
-      // If user is a viewer and streamer exists, notify streamer of new viewer
-      if (role === 'viewer' && room.streamer) {
-        io.to(room.streamer.socketId).emit('new-viewer', {
-          viewerId: socket.id,
-          username: username,
-          viewerCount: getViewerCount(roomId)
-        });
-      }
-
-      // Broadcast updated viewer count to all in room
-      io.to(roomId).emit('viewer-count-update', {
-        count: getViewerCount(roomId)
+    if (username.length < 3 || username.length > 20) {
+      socket.emit('register-response', { 
+        success: false, 
+        error: 'Username must be between 3 and 20 characters' 
       });
+      return;
+    }
 
-      // Send join notification to chat
-      io.to(roomId).emit('chat-message', {
-        username: 'System',
-        message: `${username} joined the ${role === 'streamer' ? 'stream' : 'chat'}`,
-        timestamp: Date.now(),
-        isSystem: true
+    if (password.length < 6) {
+      socket.emit('register-response', { 
+        success: false, 
+        error: 'Password must be at least 6 characters' 
       });
+      return;
+    }
 
-    } catch (error) {
-      console.error('❌ Error in join-room:', error);
-      socket.emit('error', { message: 'Failed to join room' });
+    const result = await dbQuery('register', { username, password });
+    
+    if (result.success) {
+      socket.emit('register-response', { 
+        success: true, 
+        userId: result.userId,
+        username: username
+      });
+    } else {
+      socket.emit('register-response', { 
+        success: false, 
+        error: result.error || 'Registration failed' 
+      });
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: streamer-ready
-  // Notifies all viewers that the stream is starting
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('streamer-ready', ({ roomId }) => {
-    try {
-      console.log(`🔴 STREAM STARTED in room: ${roomId}`);
-      
-      const room = rooms[roomId];
-      if (!room || room.streamer?.socketId !== socket.id) {
-        console.error('❌ Unauthorized streamer-ready event');
-        return;
-      }
-
-      // Notify all viewers to initiate WebRTC connection
-      room.viewers.forEach(viewer => {
-        io.to(viewer.socketId).emit('streamer-live', {
-          streamerId: socket.id,
-          streamerUsername: room.streamer.username
-        });
+  socket.on('login', async (data) => {
+    const { username, password } = data;
+    
+    if (!username || !password) {
+      socket.emit('login-response', { 
+        success: false, 
+        error: 'Username and password are required' 
       });
+      return;
+    }
 
-      // Broadcast system message
-      io.to(roomId).emit('chat-message', {
-        username: 'System',
-        message: '🔴 Stream is now LIVE!',
-        timestamp: Date.now(),
-        isSystem: true
+    const result = await dbQuery('login', { username, password });
+    
+    if (result.success) {
+      userSockets[result.userId] = socket.id;
+      socketToUser[socket.id] = {
+        userId: result.userId,
+        username: username
+      };
+
+      socket.emit('login-response', { 
+        success: true, 
+        userId: result.userId,
+        username: username
       });
-
-    } catch (error) {
-      console.error('❌ Error in streamer-ready:', error);
+    } else {
+      socket.emit('login-response', { 
+        success: false, 
+        error: result.error || 'Invalid credentials' 
+      });
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: webrtc-offer
-  // Relay WebRTC offer from streamer to specific viewer
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('webrtc-offer', ({ offer, targetId, roomId }) => {
-    try {
-      console.log(`📤 Relaying offer from ${socket.id} to ${targetId}`);
+  socket.on('get-active-streams', async () => {
+    const result = await dbQuery('getActiveStreams', {});
+    
+    if (result.success) {
+      socket.emit('active-streams-list', { 
+        success: true, 
+        streams: result.streams 
+      });
+    } else {
+      socket.emit('active-streams-list', { 
+        success: true, 
+        streams: [] 
+      });
+    }
+  });
+
+  socket.on('join-room', async (data) => {
+    const { roomId, userId } = data;
+    
+    if (!roomId || !userId) {
+      socket.emit('join-error', { error: 'Room ID and User ID required' });
+      return;
+    }
+
+    const user = socketToUser[socket.id];
+    if (!user || user.userId !== userId) {
+      socket.emit('join-error', { error: 'User not authenticated' });
+      return;
+    }
+
+    socket.join(roomId);
+    socketToRoom[socket.id] = roomId;
+
+    if (!rooms[roomId]) {
+      rooms[roomId] = {
+        streamer: null,
+        viewers: [],
+        streamActive: false
+      };
+    }
+
+    const streamCheck = await dbQuery('checkStreamActive', { roomId });
+    
+    if (streamCheck.success && streamCheck.active) {
+      rooms[roomId].streamActive = true;
       
-      io.to(targetId).emit('webrtc-offer', {
-        offer: offer,
+      if (!rooms[roomId].streamer) {
+        const streamerSocketId = userSockets[streamCheck.userId];
+        if (streamerSocketId) {
+          rooms[roomId].streamer = streamerSocketId;
+        }
+      }
+    }
+
+    const isStreamer = rooms[roomId].streamer === socket.id;
+
+    if (!isStreamer && !rooms[roomId].viewers.includes(socket.id)) {
+      rooms[roomId].viewers.push(socket.id);
+    }
+
+    socket.emit('room-joined', {
+      roomId,
+      role: isStreamer ? 'streamer' : 'viewer',
+      streamActive: rooms[roomId].streamActive
+    });
+
+    const chatHistory = await dbQuery('getChatHistory', { roomId, limit: 100 });
+    if (chatHistory.success && chatHistory.messages) {
+      socket.emit('chat-history', { messages: chatHistory.messages });
+    }
+
+    if (rooms[roomId].streamer && !isStreamer && rooms[roomId].streamActive) {
+      const streamerSocket = io.sockets.sockets.get(rooms[roomId].streamer);
+      if (streamerSocket) {
+        streamerSocket.emit('new-viewer', { viewerId: socket.id });
+      }
+    }
+
+    updateViewerCount(roomId);
+  });
+
+  socket.on('start-stream', async (data) => {
+    const { roomId, userId } = data;
+    
+    if (!roomId || !userId) {
+      socket.emit('stream-error', { error: 'Room ID and User ID required' });
+      return;
+    }
+
+    const user = socketToUser[socket.id];
+    if (!user || user.userId !== userId) {
+      socket.emit('stream-error', { error: 'User not authenticated' });
+      return;
+    }
+
+    if (!rooms[roomId]) {
+      rooms[roomId] = {
+        streamer: null,
+        viewers: [],
+        streamActive: false
+      };
+    }
+
+    const streamCheck = await dbQuery('checkStreamActive', { roomId });
+    
+    if (streamCheck.success && streamCheck.active && streamCheck.userId !== userId) {
+      socket.emit('stream-error', { error: 'Stream already active in this room' });
+      return;
+    }
+
+    rooms[roomId].streamer = socket.id;
+    rooms[roomId].streamActive = true;
+    
+    const viewers = rooms[roomId].viewers.filter(v => v !== socket.id);
+    rooms[roomId].viewers = viewers;
+
+    const result = await dbQuery('startStream', { roomId, userId });
+    
+    if (result.success) {
+      socket.emit('stream-started', { roomId });
+      
+      io.to(roomId).emit('stream-status-changed', { 
+        active: true,
+        roomId 
+      });
+
+      updateViewerCount(roomId);
+    } else {
+      socket.emit('stream-error', { error: 'Failed to start stream' });
+    }
+  });
+
+  socket.on('stop-stream', async (data) => {
+    const { roomId, userId } = data;
+    
+    if (!roomId) return;
+
+    if (rooms[roomId] && rooms[roomId].streamer === socket.id) {
+      rooms[roomId].streamActive = false;
+      
+      await dbQuery('stopStream', { roomId, userId });
+
+      io.to(roomId).emit('stream-status-changed', { 
+        active: false,
+        roomId 
+      });
+
+      rooms[roomId].viewers.forEach(viewerId => {
+        const viewerSocket = io.sockets.sockets.get(viewerId);
+        if (viewerSocket) {
+          viewerSocket.emit('stream-ended');
+        }
+      });
+
+      updateViewerCount(roomId);
+    }
+  });
+
+  socket.on('offer', (data) => {
+    const { offer, viewerId, roomId } = data;
+    
+    if (!viewerId || !offer) return;
+
+    const viewerSocket = io.sockets.sockets.get(viewerId);
+    if (viewerSocket) {
+      viewerSocket.emit('offer', {
+        offer,
         streamerId: socket.id
       });
-
-    } catch (error) {
-      console.error('❌ Error relaying offer:', error);
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: webrtc-answer
-  // Relay WebRTC answer from viewer to streamer
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('webrtc-answer', ({ answer, targetId, roomId }) => {
-    try {
-      console.log(`📥 Relaying answer from ${socket.id} to ${targetId}`);
-      
-      io.to(targetId).emit('webrtc-answer', {
-        answer: answer,
+  socket.on('answer', (data) => {
+    const { answer, streamerId } = data;
+    
+    if (!streamerId || !answer) return;
+
+    const streamerSocket = io.sockets.sockets.get(streamerId);
+    if (streamerSocket) {
+      streamerSocket.emit('answer', {
+        answer,
         viewerId: socket.id
       });
-
-    } catch (error) {
-      console.error('❌ Error relaying answer:', error);
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: webrtc-ice-candidate
-  // Relay ICE candidates between peers
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('webrtc-ice-candidate', ({ candidate, targetId, roomId }) => {
-    try {
-      console.log(`🧊 Relaying ICE candidate from ${socket.id} to ${targetId}`);
-      
-      io.to(targetId).emit('webrtc-ice-candidate', {
-        candidate: candidate,
-        fromId: socket.id
-      });
+  socket.on('ice-candidate', (data) => {
+    const { candidate, targetId } = data;
+    
+    if (!targetId || !candidate) return;
 
-    } catch (error) {
-      console.error('❌ Error relaying ICE candidate:', error);
+    const targetSocket = io.sockets.sockets.get(targetId);
+    if (targetSocket) {
+      targetSocket.emit('ice-candidate', {
+        candidate,
+        senderId: socket.id
+      });
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: chat-message
-  // Broadcast chat messages to all users in the room
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('chat-message', ({ roomId, username, message }) => {
-    try {
-      if (!message || message.trim() === '') return;
+  socket.on('send-message', async (data) => {
+    const { roomId, userId, message } = data;
+    
+    if (!roomId || !userId || !message) return;
 
-      console.log(`💬 [${roomId}] ${username}: ${message}`);
+    const user = socketToUser[socket.id];
+    if (!user || user.userId !== userId) {
+      socket.emit('message-error', { error: 'Not authenticated' });
+      return;
+    }
 
-      // Broadcast to all clients in the room
-      io.to(roomId).emit('chat-message', {
-        username: username,
-        message: message.trim(),
-        timestamp: Date.now(),
-        isSystem: false
-      });
+    const trimmedMessage = message.trim();
+    if (trimmedMessage.length === 0 || trimmedMessage.length > 500) {
+      socket.emit('message-error', { error: 'Invalid message length' });
+      return;
+    }
 
-    } catch (error) {
-      console.error('❌ Error sending chat message:', error);
+    const result = await dbQuery('saveMessage', {
+      roomId,
+      userId,
+      username: user.username,
+      message: trimmedMessage
+    });
+
+    if (result.success) {
+      const messageData = {
+        username: user.username,
+        message: trimmedMessage,
+        timestamp: new Date().toISOString()
+      };
+
+      io.to(roomId).emit('new-message', messageData);
+    } else {
+      socket.emit('message-error', { error: 'Failed to send message' });
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: end-stream
-  // Handle streamer ending the broadcast
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('end-stream', ({ roomId }) => {
-    try {
-      console.log(`⏹️  Stream ended in room: ${roomId}`);
+  socket.on('viewer-ready', (data) => {
+    const { roomId } = data;
+    
+    if (!roomId || !rooms[roomId]) return;
 
-      const room = rooms[roomId];
-      if (!room || room.streamer?.socketId !== socket.id) return;
-
-      // Notify all viewers that stream has ended
-      io.to(roomId).emit('stream-ended', {
-        message: 'The stream has ended'
-      });
-
-      // Broadcast system message
-      io.to(roomId).emit('chat-message', {
-        username: 'System',
-        message: '⏹️  Stream has ended',
-        timestamp: Date.now(),
-        isSystem: true
-      });
-
-    } catch (error) {
-      console.error('❌ Error ending stream:', error);
+    if (rooms[roomId].streamer) {
+      const streamerSocket = io.sockets.sockets.get(rooms[roomId].streamer);
+      if (streamerSocket) {
+        streamerSocket.emit('viewer-ready', { viewerId: socket.id });
+      }
     }
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: disconnect
-  // Clean up when a user disconnects
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('disconnect', () => {
-    try {
-      console.log(`🔌 Disconnected: ${socket.id}`);
+  socket.on('request-stream', (data) => {
+    const { roomId } = data;
+    
+    if (!roomId || !rooms[roomId]) return;
 
-      const result = removeSocketFromRoom(socket.id);
-      
-      if (result) {
-        const { roomId, wasStreamer, username, viewerCount } = result;
+    if (rooms[roomId].streamer && rooms[roomId].streamActive) {
+      const streamerSocket = io.sockets.sockets.get(rooms[roomId].streamer);
+      if (streamerSocket) {
+        streamerSocket.emit('viewer-requesting-stream', { viewerId: socket.id });
+      }
+    }
+  });
 
-        if (wasStreamer) {
-          // Stream ended due to disconnection
-          console.log(`⚠️  Streamer disconnected from room ${roomId}`);
-          
-          io.to(roomId).emit('stream-ended', {
-            message: 'The streamer has disconnected'
-          });
+  socket.on('disconnect', async () => {
+    console.log(`Disconnected: ${socket.id}`);
 
-          io.to(roomId).emit('chat-message', {
-            username: 'System',
-            message: '⚠️  Stream ended (streamer disconnected)',
-            timestamp: Date.now(),
-            isSystem: true
-          });
-        } else {
-          // Viewer disconnected
-          console.log(`👋 Viewer left room ${roomId} (${viewerCount} viewers remaining)`);
-          
-          // Update viewer count
-          io.to(roomId).emit('viewer-count-update', {
-            count: viewerCount
-          });
-
-          io.to(roomId).emit('chat-message', {
-            username: 'System',
-            message: `${username} left`,
-            timestamp: Date.now(),
-            isSystem: true
-          });
+    const roomId = socketToRoom[socket.id];
+    
+    if (roomId && rooms[roomId]) {
+      if (rooms[roomId].streamer === socket.id) {
+        const user = socketToUser[socket.id];
+        if (user) {
+          await dbQuery('stopStream', { roomId, userId: user.userId });
         }
 
-        // Log current room state
-        console.log(`📊 Room ${roomId} status:`, {
-          hasStreamer: hasStreamer(roomId),
-          viewerCount: viewerCount
+        rooms[roomId].streamActive = false;
+        
+        io.to(roomId).emit('stream-status-changed', { 
+          active: false,
+          roomId 
         });
+
+        rooms[roomId].viewers.forEach(viewerId => {
+          const viewerSocket = io.sockets.sockets.get(viewerId);
+          if (viewerSocket) {
+            viewerSocket.emit('stream-ended');
+          }
+        });
+
+        rooms[roomId].streamer = null;
+      } else {
+        rooms[roomId].viewers = rooms[roomId].viewers.filter(v => v !== socket.id);
+        
+        if (rooms[roomId].streamer) {
+          const streamerSocket = io.sockets.sockets.get(rooms[roomId].streamer);
+          if (streamerSocket) {
+            streamerSocket.emit('viewer-left', { viewerId: socket.id });
+          }
+        }
       }
 
-    } catch (error) {
-      console.error('❌ Error handling disconnect:', error);
+      updateViewerCount(roomId);
+
+      if (!rooms[roomId].streamer && rooms[roomId].viewers.length === 0) {
+        delete rooms[roomId];
+      }
+    }
+
+    const user = socketToUser[socket.id];
+    if (user) {
+      delete userSockets[user.userId];
+    }
+    
+    delete socketToUser[socket.id];
+    delete socketToRoom[socket.id];
+  });
+
+  socket.on('ping', () => {
+    socket.emit('pong');
+  });
+
+  socket.on('get-viewer-count', (data) => {
+    const { roomId } = data;
+    if (roomId && rooms[roomId]) {
+      socket.emit('viewer-count', { 
+        count: rooms[roomId].viewers.length 
+      });
     }
   });
+});
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EVENT: error
-  // Log socket errors
-  // ─────────────────────────────────────────────────────────────────────────
-  socket.on('error', (error) => {
-    console.error(`❌ Socket error for ${socket.id}:`, error);
+function updateViewerCount(roomId) {
+  if (!rooms[roomId]) return;
+
+  const count = rooms[roomId].viewers.length;
+  
+  io.to(roomId).emit('viewer-count', { count });
+}
+
+setInterval(() => {
+  Object.keys(rooms).forEach(roomId => {
+    updateViewerCount(roomId);
+  });
+}, 5000);
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    rooms: Object.keys(rooms).length,
+    connections: io.sockets.sockets.size
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SERVER STARTUP
-// ═══════════════════════════════════════════════════════════════════════════
-
-server.listen(PORT, () => {
-  console.log(`
-╔══════════════════════════════════════════════════════════════════════╗
-║                                                                      ║
-║   🚀 NANOSTREAM SERVER RUNNING                                      ║
-║                                                                      ║
-║   📡 Port: ${PORT}                                                      ║
-║   🌐 URL:  http://localhost:${PORT}                                    ║
-║   💬 WebSocket: Active                                              ║
-║   🎥 WebRTC: Ready                                                  ║
-║                                                                      ║
-║   Press Ctrl+C to stop                                              ║
-║                                                                      ║
-╚══════════════════════════════════════════════════════════════════════╝
-  `);
+app.get('/api/rooms', (req, res) => {
+  const roomList = Object.keys(rooms).map(roomId => ({
+    roomId,
+    viewers: rooms[roomId].viewers.length,
+    active: rooms[roomId].streamActive
+  }));
+  res.json({ rooms: roomList });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// GRACEFUL SHUTDOWN
-// ═══════════════════════════════════════════════════════════════════════════
+server.listen(PORT, () => {
+  console.log(`NanoStream server running on port ${PORT}`);
+});
 
 process.on('SIGTERM', () => {
-  console.log('⏹️  SIGTERM received, closing server gracefully...');
+  console.log('SIGTERM received, closing server');
   server.close(() => {
-    console.log('✅ Server closed');
+    console.log('Server closed');
     process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
-  console.log('\n⏹️  SIGINT received, closing server gracefully...');
+  console.log('SIGINT received, closing server');
   server.close(() => {
-    console.log('✅ Server closed');
+    console.log('Server closed');
     process.exit(0);
   });
 });
