@@ -1,0 +1,406 @@
+/**
+ * NanoStream - Custom Styles
+ * 
+ * This stylesheet contains custom styles that complement Tailwind CSS.
+ * It includes animations, custom scrollbars, glass morphism effects,
+ * and responsive utilities for a modern, polished UI.
+ */
+
+/* ============================================================================
+   GLOBAL STYLES & FONTS
+   ============================================================================ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  overflow-x: hidden;
+}
+
+.font-inter {
+  font-family: 'Inter', sans-serif;
+}
+
+/* ============================================================================
+   CUSTOM SCROLLBAR
+   ============================================================================ */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #18181b;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+/* Firefox */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 #18181b;
+}
+
+/* ============================================================================
+   GLASS MORPHISM CARD
+   ============================================================================ */
+
+.glass-card {
+  background: rgba(39, 39, 42, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+/* ============================================================================
+   ANIMATED GRADIENT BACKGROUND
+   ============================================================================ */
+
+.animated-gradient {
+  background: linear-gradient(
+    -45deg,
+    #18181b,
+    #27272a,
+    #1e1b4b,
+    #312e81
+  );
+  background-size: 400% 400%;
+  animation: gradientShift 15s ease infinite;
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* ============================================================================
+   PULSE ANIMATION (SLOWER)
+   ============================================================================ */
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* ============================================================================
+   VIDEO ELEMENTS
+   ============================================================================ */
+
+video {
+  background: #000;
+  display: block;
+}
+
+video::-webkit-media-controls-panel {
+  background-image: linear-gradient(transparent, rgba(0, 0, 0, 0.5));
+}
+
+/* Ensure videos don't exceed viewport on mobile */
+@media (max-width: 1024px) {
+  video {
+    max-height: 60vh;
+  }
+}
+
+/* ============================================================================
+   CHAT MESSAGE STYLES
+   ============================================================================ */
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(63, 63, 70, 0.3);
+  transition: background 0.2s;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.chat-message:hover {
+  background: rgba(63, 63, 70, 0.5);
+}
+
+.chat-message.system {
+  background: rgba(139, 92, 246, 0.1);
+  border-left: 3px solid #8b5cf6;
+  font-style: italic;
+}
+
+.chat-username {
+  font-weight: 600;
+  color: #a78bfa;
+  margin-right: 6px;
+}
+
+.chat-text {
+  color: #e4e4e7;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.chat-timestamp {
+  font-size: 0.7rem;
+  color: #71717a;
+  margin-left: 8px;
+}
+
+/* ============================================================================
+   BUTTON RIPPLE EFFECT
+   ============================================================================ */
+
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.ripple:active::after {
+  width: 300px;
+  height: 300px;
+}
+
+/* ============================================================================
+   STATUS INDICATORS
+   ============================================================================ */
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-dot.live {
+  background-color: #ef4444;
+}
+
+.status-dot.offline {
+  background-color: #71717a;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+}
+
+/* ============================================================================
+   LOADING SPINNER
+   ============================================================================ */
+
+.spinner {
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top: 3px solid #8b5cf6;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* ============================================================================
+   TOOLTIP
+   ============================================================================ */
+
+.tooltip {
+  position: relative;
+  display: inline-block;
+}
+
+.tooltip .tooltip-text {
+  visibility: hidden;
+  width: 120px;
+  background-color: #27272a;
+  color: #fff;
+  text-align: center;
+  border-radius: 6px;
+  padding: 5px;
+  position: absolute;
+  z-index: 1;
+  bottom: 125%;
+  left: 50%;
+  margin-left: -60px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-size: 0.75rem;
+}
+
+.tooltip:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* ============================================================================
+   RESPONSIVE LAYOUT ADJUSTMENTS
+   ============================================================================ */
+
+/* Mobile: Stack video and chat vertically */
+@media (max-width: 1023px) {
+  #streamer-screen,
+  #viewer-screen {
+    flex-direction: column;
+  }
+  
+  .lg\:w-96 {
+    width: 100%;
+    max-height: 50vh;
+  }
+  
+  /* Adjust chat height on mobile */
+  #streamer-screen > div:last-child,
+  #viewer-screen > div:last-child {
+    height: 400px !important;
+    border-left: none;
+    border-top: 1px solid #27272a;
+  }
+}
+
+/* Desktop: Side-by-side layout */
+@media (min-width: 1024px) {
+  #streamer-screen > div:last-child,
+  #viewer-screen > div:last-child {
+    height: 100vh !important;
+  }
+}
+
+/* ============================================================================
+   FADE IN ANIMATION
+   ============================================================================ */
+
+.fade-in {
+  animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================================
+   NOTIFICATION BADGE
+   ============================================================================ */
+
+.notification-badge {
+  position: relative;
+}
+
+.notification-badge::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  background: #ef4444;
+  border-radius: 50%;
+  border: 2px solid #18181b;
+}
+
+/* ============================================================================
+   ERROR SHAKE ANIMATION
+   ============================================================================ */
+
+.shake {
+  animation: shake 0.5s;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-10px); }
+  20%, 40%, 60%, 80% { transform: translateX(10px); }
+}
+
+/* ============================================================================
+   ACCESSIBILITY IMPROVEMENTS
+   ============================================================================ */
+
+/* Focus visible for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+}
+
+/* Reduced motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+.hidden {
+  display: none !important;
+}
+
+.invisible {
+  visibility: hidden;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
