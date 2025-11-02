@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NanoStream - Low Latency Streaming</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<style>
+* {
+box-sizing: border-box;
+margin: 0;
+padding: 0;
+}
+
+body {
+font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+background: #18181b;
+color: #f9f9f9;
+overflow-x: hidden;
+}
+
+.gradient-bg {
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.glass-effect {
+background: rgba(255, 255, 255, 0.05);
+backdrop-filter: blur(10px);
+border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-container {
+height: calc(100vh - 200px);
+min-height: 400px;
+}
+
+.video-container {
+position: relative;
+width: 100%;
+background: #000;
+border-radius: 12px;
+overflow: hidden;
+}
+
+.video-container video {
+width: 100%;
+height: 100%;
+object-fit: contain;
+display: block;
+}
+
+.viewer-badge {
+background: #8b5cf6;
+color: white;
+padding: 2px 8px;
+border-radius: 9999px;
+font-size: 0.75rem;
+font-weight: 600;
+}
+
+.live-badge {
+background: #ef4444;
+color: white;
+padding: 4px 12px;
+border-radius: 6px;
+font-weight: 700;
+font-size: 0.875rem;
+animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+0%, 100% {
+opacity: 1;
+}
+50% {
+opacity: 0.7;
+}
+}
+
+.stream-card {
+background: #27272a;
+border-radius: 12px;
+overflow: hidden;
+transition: transform 0.2s, box-shadow 0.2s;
+cursor: pointer;
+}
+
+.stream-card:hover {
+transform: translateY(-4px);
+box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+}
+
+.chat-message {
+padding: 8px 12px;
+border-radius: 8px;
+margin-bottom: 6px;
+background: rgba(255, 255, 255, 0.05);
+word-wrap: break-word;
+animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+from {
+opacity: 0;
+transform: translateY(10px);
+}
+to {
+opacity: 1;
+transform: translateY(0);
+}
+}
+
+.chat-message strong {
+color: #8b5cf6;
+margin-right: 6px;
+}
+
+.btn-primary {
+background: #8b5cf6;
+color: white;
+padding: 12px 24px;
+border-radius: 8px;
+font-weight: 600;
+border: none;
+cursor: pointer;
+transition: all 0.2s;
+}
+
+.btn-primary:hover {
+background: #7c3aed;
+transform: translateY(-2px);
+box-shadow: 0 10px 15px -3px rgba(139, 92, 246, 0.4);
+}
+
+.btn-primary:active {
+transform: translateY(0);
+}
+
+.btn-secondary {
+background: #3f3f46;
+color: white;
+padding: 12px 24px;
+border-radius: 8px;
+font-weight: 600;
+border: none;
+cursor: pointer;
+transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+background: #52525b;
+}
+
+.btn-danger {
+background: #ef4444;
+color: white;
+padding: 12px 24px;
+border-radius: 8px;
+font-weight: 600;
+border: none;
+cursor: pointer;
+transition: all 0.2s;
+}
+
+.btn-danger:hover {
+background: #dc2626;
+}
+
+.input-field {
+background: #27272a;
+border: 2px solid #3f3f46;
+color: #f9f9f9;
+padding: 12px 16px;
+border-radius: 8px;
+width: 100%;
+font-size: 1rem;
+transition: border-color 0.2s;
+}
+
+.input-field:focus {
+outline: none;
+border-color: #8b5cf6;
+}
+
+.loading-spinner {
+border: 3px solid rgba(255, 255, 255, 0.1);
+border-top-color: #8b5cf6;
+border-radius: 50%;
+width: 40px;
+height: 40px;
+animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+to {
+transform: rotate(360deg);
+}
+}
+
+.hidden {
+display: none !important;
+}
+
+.typing-indicator {
+display: flex;
+gap: 4px;
+padding: 8px;
+}
+
+.typing-dot {
+width: 8px;
+height: 8px;
+background: #8b5cf6;
+border-radius: 50%;
+animation: typing 1.4s infinite;
+}
+
+.typing-dot:nth-child(2) {
+animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+animation-delay: 0.4s;
+}
+
+@keyframes typing {
+0%, 60%, 100% {
+transform: translateY(0);
+}
+30% {
+transform: translateY(-10px);
+}
+}
+
+.error-message {
+background: rgba(239, 68, 68, 0.1);
+border: 1px solid #ef4444;
+color: #fca5a5;
+padding: 12px;
+border-radius: 8px;
+margin-bottom: 16px;
+}
+
+.success-message {
+background: rgba(34, 197, 94, 0.1);
+border: 1px solid #22c55e;
+color: #86efac;
+padding: 12px;
+border-radius: 8px;
+margin-bottom: 16px;
+}
+
+@media (max-width: 768px) {
+.chat-container {
+height: 300px;
+}
+}
+
+.offline-overlay {
+position: absolute;
+top: 0;
+left: 0;
+right: 0;
+bottom: 0;
+background: rgba(0, 0, 0, 0.8);
+display: flex;
+align-items: center;
+justify-content: center;
+flex-direction: column;
+gap: 16px;
+}
+
+.connection-status {
+position: fixed;
+top: 20px;
+right: 20px;
+padding: 8px 16px;
+border-radius: 8px;
+font-size: 0.875rem;
+font-weight: 600;
+z-index: 1000;
+}
+
+.connection-status.connected {
+background: rgba(34, 197, 94, 0.2);
+border: 1px solid #22c55e;
+color: #86efac;
+}
+
+.connection-status.disconnected {
+background: rgba(239, 68, 68, 0.2);
+border: 1px solid #ef4444;
+color: #fca5a5;
+}
+
+.stream-grid {
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+gap: 20px;
+padding: 20px;
+}
+
+.thumbnail {
+width: 100%;
+aspect-ratio: 16/9;
+background: #000;
+position: relative;
+}
+
+.thumbnail img {
+width: 100%;
+height: 100%;
+object-fit: cover;
+}
+
+.stream-info {
+padding: 16px;
+}
+
+.avatar {
+width: 40px;
+height: 40px;
+border-radius: 50%;
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+display: flex;
+align-items: center;
+justify-content: center;
+font-weight: 700;
+color: white;
+}
+
+.tooltip {
+position: relative;
+}
+
+.tooltip:hover::after {
+content: attr(data-tooltip);
+position: absolute;
+bottom: 100%;
+left: 50%;
+transform: translateX(-50%);
+background: #27272a;
+color: #f9f9f9;
+padding: 8px 12px;
+border-radius: 6px;
+white-space: nowrap;
+margin-bottom: 8px;
+font-size: 0.875rem;
+z-index: 100;
+}
+
+.modal {
+position: fixed;
+top: 0;
+left: 0;
+right: 0;
+bottom: 0;
+background: rgba(0, 0, 0, 0.8);
+display: flex;
+align-items: center;
+justify-content: center;
+z-index: 2000;
+padding: 20px;
+}
+
+.modal-content {
+background: #27272a;
+border-radius: 16px;
+padding: 32px;
+max-width: 500px;
+width: 100%;
+max-height: 90vh;
+overflow-y: auto;
+}
+</style>
+</head>
+<body>
+
+<div id="connectionStatus" class="connection-status hidden"></div>
+
+<div id="authView" class="min-h-screen flex items-center justify-center p-4">
+<div class="max-w-md w-full">
+<div class="text-center mb-8">
+<h1 class="text-5xl font-bold gradient-bg bg-clip-text text-transparent mb-2">NanoStream</h1>
+<p class="text-gray-400">Low-latency live streaming platform</p>
+</div>
+<div class="glass-effect rounded-2xl p-8">
+<div id="errorContainer"></div>
+<div id="loginForm">
+<h2 class="text-2xl font-bold mb-6">Login</h2>
+<div class="space-y-4">
+<div>
+<label class="block text-sm font-medium mb-2">Username</label>
+<input type="text" id="loginUsername" class="input-field" placeholder="Enter username" autocomplete="username">
+</div>
+<div>
+<label class="block text-sm font-medium mb-2">Password</label>
+<input type="password" id="loginPassword" class="input-field" placeholder="Enter password" autocomplete="current-password">
+</div>
+<button onclick="handleLogin()" class="btn-primary w-full">Login</button>
+<button onclick="showRegisterForm()" class="btn-secondary w-full mt-2">Create Account</button>
+</div>
+</div>
+<div id="registerForm" class="hidden">
+<h2 class="text-2xl font-bold mb-6">Register</h2>
+<div class="space-y-4">
+<div>
+<label class="block text-sm font-medium mb-2">Username</label>
+<input type="text" id="registerUsername" class="input-field" placeholder="Choose username (3-20 chars)" autocomplete="username">
+</div>
+<div>
+<label class="block text-sm font-medium mb-2">Password</label>
+<input type="password" id="registerPassword" class="input-field" placeholder="Choose password (min 6 chars)" autocomplete="new-password">
+</div>
+<div>
+<label class="block text-sm font-medium mb-2">Confirm Password</label>
+<input type="password" id="registerPasswordConfirm" class="input-field" placeholder="Confirm password" autocomplete="new-password">
+</div>
+<button onclick="handleRegister()" class="btn-primary w-full">Register</button>
+<button onclick="showLoginForm()" class="btn-secondary w-full mt-2">Back to Login</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div id="mainView" class="hidden">
+<nav class="bg-zinc-900 border-b border-zinc-800 sticky top-0 z-50">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<div class="flex justify-between items-center h-16">
+<div class="flex items-center gap-4">
+<h1 class="text-2xl font-bold gradient-bg bg-clip-text text-transparent">NanoStream</h1>
+<button onclick="showBrowseView()" class="btn-secondary px-4 py-2">Browse</button>
+<button onclick="showGoLiveModal()" class="btn-primary px-4 py-2">Go Live</button>
+</div>
+<div class="flex items-center gap-4">
+<div class="avatar tooltip" data-tooltip="Profile">
+<span id="userAvatar"></span>
+</div>
+<span id="currentUsername" class="font-semibold"></span>
+<button onclick="handleLogout()" class="btn-secondary px-4 py-2">Logout</button>
+</div>
+</div>
+</div>
+</nav>
+
+<div id="browseView" class="max-w-7xl mx-auto p-4">
+<div class="mb-6">
+<h2 class="text-3xl font-bold mb-2">Live Now</h2>
+<p class="text-gray-400">Join a stream and start watching</p>
+</div>
+<div id="streamsList" class="stream-grid">
+<div class="text-center py-20 col-span-full">
+<div class="loading-spinner mx-auto mb-4"></div>
+<p class="text-gray-400">Loading streams...</p>
+</div>
+</div>
+</div>
+
+<div id="roomView" class="hidden">
+<div class="max-w-7xl mx-auto p-4">
+<div class="mb-4 flex justify-between items-center">
+<button onclick="leaveRoom()" class="btn-secondary px-4 py-2">← Back</button>
+<div id="roomTitle" class="text-xl font-bold"></div>
+<div id="viewerCountDisplay" class="viewer-badge">0 viewers</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+<div class="lg:col-span-2">
+<div class="video-container aspect-video">
+<video id="remoteVideo" autoplay playsinline></video>
+<video id="localVideo" autoplay muted playsinline></video>
+<div id="offlineOverlay" class="offline-overlay hidden">
+<div class="loading-spinner mb-4"></div>
+<p class="text-xl font-semibold">Connecting to stream...</p>
+<p class="text-gray-400">Please wait</p>
+</div>
+</div>
+<div id="streamerControls" class="hidden mt-4 space-y-4">
+<div class="glass-effect rounded-xl p-4">
+<h3 class="font-bold mb-2">Stream Controls</h3>
+<div class="space-y-2">
+<div>
+<label class="block text-sm font-medium mb-1">Stream Title</label>
+<input type="text" id="streamTitleInput" class="input-field" placeholder="Enter stream title">
+</div>
+<button onclick="updateStreamTitle()" class="btn-secondary w-full">Update Title</button>
+<button id="toggleStreamBtn" onclick="toggleStream()" class="btn-primary w-full">Start Stream</button>
+<button onclick="endStream()" class="btn-danger w-full hidden" id="endStreamBtn">End Stream</button>
+</div>
+</div>
+</div>
+</div>
+<div class="lg:col-span-1">
+<div class="glass-effect rounded-xl p-4 chat-container flex flex-col">
+<h3 class="font-bold mb-4 flex items-center justify-between">
+<span>Chat</span>
+<span id="chatViewerCount" class="text-sm text-gray-400">0 viewers</span>
+</h3>
+<div id="chatMessages" class="flex-1 overflow-y-auto mb-4 space-y-2"></div>
+<div id="typingIndicatorContainer" class="mb-2 hidden">
+<div class="typing-indicator">
+<div class="typing-dot"></div>
+<div class="typing-dot"></div>
+<div class="typing-dot"></div>
+</div>
+</div>
+<div class="flex gap-2">
+<input type="text" id="chatInput" class="input-field flex-1" placeholder="Send a message..." autocomplete="off">
+<button onclick="sendChatMessage()" class="btn-primary px-6">Send</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div id="goLiveModal" class="modal hidden">
+<div class="modal-content">
+<h2 class="text-2xl font-bold mb-6">Go Live</h2>
+<div id="goLiveError"></div>
+<div class="space-y-4">
+<div>
+<label class="block text-sm font-medium mb-2">Room ID</label>
+<input type="text" id="goLiveRoomId" class="input-field" placeholder="e.g., my-gaming-stream">
+<p class="text-sm text-gray-400 mt-1">Choose a unique room ID for your stream</p>
+</div>
+<div>
+<label class="block text-sm font-medium mb-2">Stream Title</label>
+<input type="text" id="goLiveTitle" class="input-field" placeholder="What are you streaming?">
+</div>
+<div class="flex gap-2">
+<button onclick="startBroadcast()" class="btn-primary flex-1">Start Broadcasting</button>
+<button onclick="closeGoLiveModal()" class="btn-secondary flex-1">Cancel</button>
+</div>
+</div>
+</div>
+</div>
+
+<div id="joinStreamModal" class="modal hidden">
+<div class="modal-content">
+<h2 class="text-2xl font-bold mb-6">Join Stream</h2>
+<div id="joinStreamError"></div>
+<div class="space-y-4">
+<div>
+<label class="block text-sm font-medium mb-2">Room ID</label>
+<input type="text" id="joinRoomId" class="input-field" placeholder="Enter room ID">
+</div>
+<div class="flex gap-2">
+<button onclick="joinAsViewer()" class="btn-primary flex-1">Join</button>
+<button onclick="closeJoinStreamModal()" class="btn-secondary flex-1">Cancel</button>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+const API_BASE = window.location.origin;
+let socket = null;
+let currentUser = null;
+let currentRoom = null;
+let isStreamer = false;
+let localStream = null;
+let peerConnections = new Map();
+let isStreamLive = false;
+let chatTypingTimeout = null;
+let heartbeatInterval = null;
+
+const config = {
+iceServers: [
+{ urls: 'stun:stun.l.google.com:19302' },
+{ urls: 'stun:stun1.l.google.com:19302' },
+{ urls: 'stun:stun2.l.google.com:19302' }
+]
+};
+
+function showView(viewId) {
+document.querySelectorAll('#authView, #mainView').forEach(el => el.classList.add('hidden'));
+document.getElementById(viewId).classList.remove('hidden');
+}
+
+function showError(message, containerId = 'errorContainer') {
+const container = document.getElementById(containerId);
+container.innerHTML = `<div class="error-message">${message}</div>`;
+setTimeout(() => {
+container.innerHTML = '';
+}, 5000);
+}
+
+function showSuccess(message, containerId = 'errorContainer') {
+const container = document.getElementById(containerId);
+container.innerHTML = `<div class="success-message">${message}</div>`;
+setTimeout(() => {
+container.innerHTML = '';
+}, 5000);
+}
+
+function showLoginForm() {
+document.getElementById('loginForm').classList.remove('hidden');
+document.getElementById('registerForm').classList.add('hidden');
+}
+
+function showRegisterForm() {
+document.getElementById('loginForm').classList.add('hidden');
+document.getElementById('registerForm').classList.remove('hidden');
+}
+
+async function handleLogin() {
+const username = document.getElementById('loginUsername').value.trim();
+const password = document.getElementById('loginPassword').value;
+
+if (!username || !password) {
+showError('Please enter username and password');
+return;
+}
+
+try {
+const response = await fetch(`${API_BASE}/api/login`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ username, password })
+});
+
+const data = await response.json();
+
+if (data.success) {
+currentUser = {
+id: data.userId,
+username: data.username
+};
+localStorage.setItem('nanostream_user', JSON.stringify(currentUser));
+showSuccess('Login successful!');
+setTimeout(() => {
+initializeApp();
+}, 500);
+} else {
+showError(data.error || 'Login failed');
+}
+} catch (error) {
+showError('Network error. Please try again.');
+console.error('Login error:', error);
+}
+}
+
+async function handleRegister() {
+const username = document.getElementById('registerUsername').value.trim();
+const password = document.getElementById('registerPassword').value;
+const confirmPassword = document.getElementById('registerPasswordConfirm').value;
+
+if (!username || !password || !confirmPassword) {
+showError('Please fill in all fields');
+return;
+}
+
+if (password !== confirmPassword) {
+showError('Passwords do not match');
+return;
+}
+
+if (username.length < 3 || username.length > 20) {
+showError('Username must be 3-20 characters');
+return;
+}
+
+if (password.length < 6) {
+showError('Password must be at least 6 characters');
+return;
+}
+
+try {
+const response = await fetch(`${API_BASE}/api/register`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ username, password })
+});
+
+const data = await response.json();
+
+if (data.success) {
+showSuccess('Registration successful! Please login.');
+setTimeout(() => {
+showLoginForm();
+document.getElementById('loginUsername').value = username;
+}, 1000);
+} else {
+showError(data.error || 'Registration failed');
+}
+} catch (error) {
+showError('Network error. Please try again.');
+console.error('Registration error:', error);
+}
+}
+
+function handleLogout() {
+if (currentRoom) {
+leaveRoom();
+}
+if (socket) {
+socket.disconnect();
+}
+currentUser = null;
+localStorage.removeItem('nanostream_user');
+showView('authView');
+showLoginForm();
+}
+
+function initializeApp() {
+showView('mainView');
+document.getElementById('currentUsername').textContent = currentUser.username;
+document.getElementById('userAvatar').textContent = currentUser.username.charAt(0).toUpperCase();
+initializeSocket();
+showBrowseView();
+loadStreams();
+}
+
+function initializeSocket() {
+socket = io(API_BASE, {
+auth: {
+userId: currentUser.id,
+username: currentUser.username
+}
+});
+
+socket.on('connect', () => {
+updateConnectionStatus(true);
+startHeartbeat();
+});
+
+socket.on('disconnect', () => {
+updateConnectionStatus(false);
+stopHeartbeat();
+});
+
+socket.on('connected', (data) => {
+console.log('Connected to server:', data);
+});
+
+socket.on('joined-as-streamer', (data) => {
+currentRoom = data.roomId;
+isStreamer = true;
+setupStreamerUI();
+});
+
+socket.on('joined-as-viewer', (data) => {
+currentRoom = data.roomId;
+isStreamer = false;
+document.getElementById('roomTitle').textContent = data.streamTitle;
+updateViewerCount(data.viewerCount);
+setupViewerUI();
+socket.emit('request-stream', { roomId: currentRoom });
+});
+
+socket.on('viewer-requesting-stream', async (data) => {
+if (isStreamer && isStreamLive) {
+await createPeerConnection(data.viewerSocketId);
+}
+});
+
+socket.on('viewer-joined', (data) => {
+if (isStreamer && isStreamLive) {
+createPeerConnection(data.viewerId);
+}
+updateViewerCount(data.viewerCount);
+});
+
+socket.on('viewer-left', (data) => {
+if (peerConnections.has(data.viewerSocketId)) {
+peerConnections.get(data.viewerSocketId).close();
+peerConnections.delete(data.viewerSocketId);
+}
+updateViewerCount(data.viewerCount);
+});
+
+socket.on('offer', async (data) => {
+if (!isStreamer) {
+await handleOffer(data.offer, data.streamerSocketId);
+}
+});
+
+socket.on('answer', async (data) => {
+if (isStreamer) {
+const pc = peerConnections.get(data.viewerSocketId);
+if (pc) {
+await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+}
+}
+});
+
+socket.on('ice-candidate', async (data) => {
+const pc = isStreamer 
+? peerConnections.get(data.fromSocketId)
+: peerConnections.get('streamer');
+    
+if (pc && data.candidate) {
+await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+}
+});
+
+socket.on('chat-message', (data) => {
+displayChatMessage(data);
+});
+
+socket.on('chat-history', (data) => {
+data.messages.forEach(msg => displayChatMessage(msg, false));
+scrollChatToBottom();
+});
+
+socket.on('viewer-count-update', (data) => {
+updateViewerCount(data.viewerCount);
+});
+
+socket.on('stream-ended', (data) => {
+handleStreamEnded(data.message);
+});
+
+socket.on('stream-offline', (data) => {
+handleStreamOffline(data.message);
+});
+
+socket.on('stream-title-updated', (data) => {
+document.getElementById('roomTitle').textContent = data.title;
+});
+
+socket.on('user-typing', (data) => {
+showTypingIndicator(data.username);
+});
+
+socket.on('user-stop-typing', () => {
+hideTypingIndicator();
+});
+
+socket.on('error', (data) => {
+showError(data.message);
+});
+
+socket.on('heartbeat-ack', (data) => {
+console.log('Heartbeat:', data.timestamp);
+});
+}
+
+function startHeartbeat() {
+heartbeatInterval = setInterval(() => {
+if (socket && socket.connected) {
+socket.emit('heartbeat');
+}
+}, 30000);
+}
+
+function stopHeartbeat() {
+if (heartbeatInterval) {
+clearInterval(heartbeatInterval);
+heartbeatInterval = null;
+}
+}
+
+function updateConnectionStatus(connected) {
+const statusEl = document.getElementById('connectionStatus');
+statusEl.classList.remove('hidden');
+if (connected) {
+statusEl.textContent = 'Connected';
+statusEl.className = 'connection-status connected';
+} else {
+statusEl.textContent = 'Disconnected';
+statusEl.className = 'connection-status disconnected';
+}
+setTimeout(() => {
+if (connected) {
+statusEl.classList.add('hidden');
+}
+}, 3000);
+}
+
+function showBrowseView() {
+document.getElementById('browseView').classList.remove('hidden');
+document.getElementById('roomView').classList.add('hidden');
+loadStreams();
+}
+
+async function loadStreams() {
+try {
+const response = await fetch(`${API_BASE}/api/streams`);
+const data = await response.json();
+
+const streamsList = document.getElementById('streamsList');
+
+if (data.success && data.streams.length > 0) {
+streamsList.innerHTML = data.streams.map(stream => `
+<div class="stream-card" onclick="joinStream('${stream.room_id}')">
+<div class="thumbnail">
+<div class="absolute top-3 left-3 live-badge">LIVE</div>
+<div class="absolute top-3 right-3 viewer-badge">${stream.viewer_count} watching</div>
+<div class="absolute inset-0 flex items-center justify-center">
+<div class="text-6xl">🎮</div>
+</div>
+</div>
+<div class="stream-info">
+<h3 class="font-bold text-lg mb-2">${escapeHtml(stream.title || 'Untitled Stream')}</h3>
+<div class="flex items-center gap-2">
+<div class="avatar" style="width: 32px; height: 32px; font-size: 0.875rem;">
+${stream.streamer_username.charAt(0).toUpperCase()}
+</div>
+<span class="text-gray-400">${escapeHtml(stream.streamer_username)}</span>
+</div>
+</div>
+</div>
+`).join('');
+} else {
+streamsList.innerHTML = `
+<div class="col-span-full text-center py-20">
+<div class="text-6xl mb-4">📺</div>
+<p class="text-xl text-gray-400">No live streams right now</p>
+<p class="text-gray-500 mt-2">Be the first to go live!</p>
+</div>
+`;
+}
+} catch (error) {
+console.error('Error loading streams:', error);
+document.getElementById('streamsList').innerHTML = `
+<div class="col-span-full text-center py-20">
+<p class="text-xl text-red-400">Error loading streams</p>
+</div>
+`;
+}
+}
+
+function escapeHtml(text) {
+const div = document.createElement('div');
+div.textContent = text;
+return div.innerHTML;
+}
+
+function showGoLiveModal() {
+document.getElementById('goLiveModal').classList.remove('hidden');
+document.getElementById('goLiveRoomId').value = generateRoomId();
+}
+
+function closeGoLiveModal() {
+document.getElementById('goLiveModal').classList.add('hidden');
+document.getElementById('goLiveError').innerHTML = '';
+}
+
+function generateRoomId() {
+return `stream-${Math.random().toString(36).substring(2, 9)}`;
+}
+
+async function startBroadcast() {
+const roomId = document.getElementById('goLiveRoomId').value.trim();
+const title = document.getElementById('goLiveTitle').value.trim() || 'Untitled Stream';
+
+if (!roomId) {
+showError('Please enter a room ID', 'goLiveError');
+return;
+}
+
+if (!/^[a-zA-Z0-9-_]+$/.test(roomId)) {
+showError('Room ID can only contain letters, numbers, hyphens, and underscores', 'goLiveError');
+return;
+}
+
+try {
+localStream = await navigator.mediaDevices.getUserMedia({
+video: {
+width: { ideal: 1920 },
+height: { ideal: 1080 },
+frameRate: { ideal: 30 }
+},
+audio: {
+echoCancellation: true,
+noiseSuppression: true,
+autoGainControl: true
+}
+});
+
+socket.emit('join-room', {
+roomId,
+isStreamer: true,
+streamTitle: title
+});
+
+closeGoLiveModal();
+document.getElementById('browseView').classList.add('hidden');
+document.getElementById('roomView').classList.remove('hidden');
+document.getElementById('roomTitle').textContent = title;
+document.getElementById('streamTitleInput').value = title;
+
+} catch (error) {
+console.error('Error getting user media:', error);
+showError('Could not access camera/microphone. Please check permissions.', 'goLiveError');
+}
+}
+
+function joinStream(roomId) {
+socket.emit('join-room', {
+roomId,
+isStreamer: false
+});
+
+document.getElementById('browseView').classList.add('hidden');
+document.getElementById('roomView').classList.remove('hidden');
+showOfflineOverlay('Connecting to stream...');
+}
+
+function setupStreamerUI() {
+document.getElementById('streamerControls').classList.remove('hidden');
+document.getElementById('localVideo').classList.remove('hidden');
+document.getElementById('remoteVideo').classList.add('hidden');
+
+const localVideo = document.getElementById('localVideo');
+localVideo.srcObject = localStream;
+localVideo.muted = true;
+
+document.getElementById('toggleStreamBtn').textContent = 'Start Stream';
+document.getElementById('endStreamBtn').classList.add('hidden');
+}
+
+function setupViewerUI() {
+document.getElementById('streamerControls').classList.add('hidden');
+document.getElementById('localVideo').classList.add('hidden');
+document.getElementById('remoteVideo').classList.remove('hidden');
+}
+
+async function toggleStream() {
+if (!isStreamLive) {
+isStreamLive = true;
+document.getElementById('toggleStreamBtn').textContent = 'Stream Live';
+document.getElementById('toggleStreamBtn').classList.add('hidden');
+document.getElementById('endStreamBtn').classList.remove('hidden');
+hideOfflineOverlay();
+} else {
+endStream();
+}
+}
+
+async function createPeerConnection(viewerSocketId) {
+const pc = new RTCPeerConnection(config);
+
+localStream.getTracks().forEach(track => {
+pc.addTrack(track, localStream);
+});
+
+pc.onicecandidate = (event) => {
+if (event.candidate) {
+socket.emit('ice-candidate', {
+roomId: currentRoom,
+candidate: event.candidate,
+targetSocketId: viewerSocketId
+});
+}
+};
+
+pc.oniceconnectionstatechange = () => {
+console.log('ICE Connection State:', pc.iceConnectionState);
+if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+pc.close();
+peerConnections.delete(viewerSocketId);
+}
+};
+
+peerConnections.set(viewerSocketId, pc);
+
+const offer = await pc.createOffer();
+await pc.setLocalDescription(offer);
+
+socket.emit('offer', {
+roomId: currentRoom,
+offer: pc.localDescription,
+targetSocketId: viewerSocketId
+});
+}
+
+async function handleOffer(offer, streamerSocketId) {
+const pc = new RTCPeerConnection(config);
+
+pc.ontrack = (event) => {
+const remoteVideo = document.getElementById('remoteVideo');
+remoteVideo.srcObject = event.streams[0];
+hideOfflineOverlay();
+};
+
+pc.onicecandidate = (event) => {
+if (event.candidate) {
+socket.emit('ice-candidate', {
+roomId: currentRoom,
+candidate: event.candidate,
+targetSocketId: streamerSocketId
+});
+}
+};
+
+pc.oniceconnectionstatechange = () => {
+console.log('ICE Connection State:', pc.iceConnectionState);
+if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+showOfflineOverlay('Connection lost. Reconnecting...');
+}
+};
+
+peerConnections.set('streamer', pc);
+
+await pc.setRemoteDescription(new RTCSessionDescription(offer));
+const answer = await pc.createAnswer();
+await pc.setLocalDescription(answer);
+
+socket.emit('answer', {
+roomId: currentRoom,
+answer: pc.localDescription
+});
+}
+
+async function updateStreamTitle() {
+const newTitle = document.getElementById('streamTitleInput').value.trim();
+if (newTitle) {
+socket.emit('update-stream-title', {
+roomId: currentRoom,
+title: newTitle
+});
+document.getElementById('roomTitle').textContent = newTitle;
+}
+}
+
+async function endStream() {
+if (localStream) {
+localStream.getTracks().forEach(track => track.stop());
+localStream = null;
+}
+
+peerConnections.forEach(pc => pc.close());
+peerConnections.clear();
+
+socket.emit('end-stream', { roomId: currentRoom });
+
+currentRoom = null;
+isStreamer = false;
+isStreamLive = false;
+
+showBrowseView();
+loadStreams();
+}
+
+async function leaveRoom() {
+if (isStreamer) {
+endStream();
+} else {
+peerConnections.forEach(pc => pc.close());
+peerConnections.clear();
+currentRoom = null;
+isStreamer = false;
+showBrowseView();
+loadStreams();
+}
+}
+
+function handleStreamEnded(message) {
+peerConnections.forEach(pc => pc.close());
+peerConnections.clear();
+showOfflineOverlay(message);
+setTimeout(() => {
+leaveRoom();
+}, 3000);
+}
+
+function handleStreamOffline(message) {
+showOfflineOverlay(message);
+}
+
+function showOfflineOverlay(message) {
+const overlay = document.getElementById('offlineOverlay');
+overlay.classList.remove('hidden');
+overlay.innerHTML = `
+<div class="loading-spinner mb-4"></div>
+<p class="text-xl font-semibold">${message}</p>
+`;
+}
+
+function hideOfflineOverlay() {
+document.getElementById('offlineOverlay').classList.add('hidden');
+}
+
+function updateViewerCount(count) {
+document.getElementById('viewerCountDisplay').textContent = `${count} viewer${count !== 1 ? 's' : ''}`;
+document.getElementById('chatViewerCount').textContent = `${count} viewer${count !== 1 ? 's' : ''}`;
+}
+
+function sendChatMessage() {
+const input = document.getElementById('chatInput');
+const message = input.value.trim();
+
+if (message && currentRoom) {
+socket.emit('chat-message', {
+roomId: currentRoom,
+message
+});
+input.value = '';
+stopTyping();
+}
+}
+
+function displayChatMessage(data, animate = true) {
+const messagesContainer = document.getElementById('chatMessages');
+const messageEl = document.createElement('div');
+messageEl.className = animate ? 'chat-message' : 'chat-message';
+messageEl.innerHTML = `<strong>${escapeHtml(data.username)}:</strong>${escapeHtml(data.message)}`;
+messagesContainer.appendChild(messageEl);
+
+if (messagesContainer.children.length > 100) {
+messagesContainer.removeChild(messagesContainer.firstChild);
+}
+
+scrollChatToBottom();
+}
+
+function scrollChatToBottom() {
+const messagesContainer = document.getElementById('chatMessages');
+messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function handleChatTyping() {
+if (currentRoom) {
+socket.emit('typing', { roomId: currentRoom });
+
+if (chatTypingTimeout) {
+clearTimeout(chatTypingTimeout);
+}
+
+chatTypingTimeout = setTimeout(() => {
+stopTyping();
+}, 2000);
+}
+}
+
+function stopTyping() {
+if (currentRoom) {
+socket.emit('stop-typing', { roomId: currentRoom });
+}
+if (chatTypingTimeout) {
+clearTimeout(chatTypingTimeout);
+chatTypingTimeout = null;
+}
+}
+
+function showTypingIndicator(username) {
+const container = document.getElementById('typingIndicatorContainer');
+container.classList.remove('hidden');
+}
+
+function hideTypingIndicator() {
+const container = document.getElementById('typingIndicatorContainer');
+container.classList.add('hidden');
+}
+
+document.getElementById('chatInput').addEventListener('keypress', (e) => {
+if (e.key === 'Enter') {
+sendChatMessage();
+} else {
+handleChatTyping();
+}
+});
+
+document.getElementById('loginPassword').addEventListener('keypress', (e) => {
+if (e.key === 'Enter') {
+handleLogin();
+}
+});
+
+document.getElementById('registerPasswordConfirm').addEventListener('keypress', (e) => {
+if (e.key === 'Enter') {
+handleRegister();
+}
+});
+
+window.addEventListener('beforeunload', () => {
+if (currentRoom) {
+leaveRoom();
+}
+});
+
+window.addEventListener('load', () => {
+const savedUser = localStorage.getItem('nanostream_user');
+if (savedUser) {
+try {
+currentUser = JSON.parse(savedUser);
+initializeApp();
+} catch (error) {
+localStorage.removeItem('nanostream_user');
+showView('authView');
+}
+} else {
+showView('authView');
+}
+});
+
+setInterval(() => {
+if (document.getElementById('browseView').classList.contains('hidden') === false) {
+loadStreams();
+}
+}, 10000);
+</script>
+</body>
+</html>
