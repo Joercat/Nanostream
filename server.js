@@ -18,12 +18,58 @@ const io = socketIo(server, {
 const PORT = process.env.PORT || 3000;
 const PHP_API_URL = process.env.PHP_API_URL || 'https://your-infinityfree-site.com/db_connector.php';
 
+// Debug log for PHP API URL
+console.log('PHP API URL:', PHP_API_URL);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 const rooms = new Map();
 const userSockets = new Map();
 const socketUsers = new Map();
+
+// Updated makePhpRequest function with better error handling
+async function makePhpRequest(action, data) {
+  try {
+    console.log('Making PHP request:', { action, data }); // Debug log
+    
+    const response = await fetch(PHP_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ action, ...data })
+    });
+    
+    // Get the raw text first
+    const rawText = await response.text();
+    console.log('Raw PHP response:', rawText); // Debug log
+    
+    try {
+      // Try to parse it as JSON
+      const result = JSON.parse(rawText);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return result;
+    } catch (parseError) {
+      console.error('Failed to parse PHP response as JSON:', parseError);
+      throw new Error(`Invalid JSON response: ${rawText.substring(0, 100)}...`);
+    }
+  } catch (error) {
+    console.error('PHP Request Error:', error);
+    return { 
+      success: false, 
+      error: error.message,
+      debug_info: {
+        action,
+        data,
+        timestamp: new Date().toISOString()
+      }
+    };
+  }
+}
 
 class Room {
   constructor(roomId, streamerId, streamerSocketId, streamerUsername, streamTitle) {
