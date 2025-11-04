@@ -16,9 +16,8 @@ const io = socketIo(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const PHP_API_URL = process.env.PHP_API_URL || 'https://your-infinityfree-site.com/db_connector.php';
+const PHP_API_URL = process.env.PHP_API_URL || 'https://lfs.ct.ws/db_connector.php';
 
-// Debug log for PHP API URL
 console.log('PHP API URL:', PHP_API_URL);
 
 app.use(express.json());
@@ -28,7 +27,7 @@ const rooms = new Map();
 const userSockets = new Map();
 const socketUsers = new Map();
 
-// Updated makePhpRequest function with better error handling
+// Updated makePhpRequest function with elements from working Python version
 async function makePhpRequest(action, data) {
   try {
     console.log('Making PHP request:', { action, data }); // Debug log
@@ -37,12 +36,20 @@ async function makePhpRequest(action, data) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'User-Agent': 'NanoStream/1.0'
       },
-      body: JSON.stringify({ action, ...data })
+      body: JSON.stringify({ action, ...data }),
+      // Added timeout
+      timeout: 30000,
+      // SSL verification options
+      rejectUnauthorized: false,
+      agent: new (require('https').Agent)({
+        rejectUnauthorized: false
+      })
     });
     
-    // Get the raw text first
+    // Get raw text first
     const rawText = await response.text();
     console.log('Raw PHP response:', rawText); // Debug log
     
@@ -55,7 +62,11 @@ async function makePhpRequest(action, data) {
       return result;
     } catch (parseError) {
       console.error('Failed to parse PHP response as JSON:', parseError);
-      throw new Error(`Invalid JSON response: ${rawText.substring(0, 100)}...`);
+      return {
+        success: false,
+        error: `Invalid JSON response: ${rawText.substring(0, 100)}...`,
+        raw_response: rawText
+      };
     }
   } catch (error) {
     console.error('PHP Request Error:', error);
