@@ -3,6 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const fetch = require('node-fetch');
+const https = require('https');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,7 +17,7 @@ const io = socketIo(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const PHP_API_URL = process.env.PHP_API_URL || 'https://lfs.ct.ws/db_connector.php';
+const PHP_API_URL = process.env.PHP_API_URL || 'https://joercat.infinityfree.com/db_connector.php';
 
 console.log('PHP API URL:', PHP_API_URL);
 
@@ -27,12 +28,21 @@ const rooms = new Map();
 const userSockets = new Map();
 const socketUsers = new Map();
 
-// Updated makePhpRequest function with elements from working Python version
+// Create custom HTTPS agent that ignores SSL errors
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false
+});
+
+// Updated makePhpRequest function with better error handling
 async function makePhpRequest(action, data) {
   try {
-    console.log('Making PHP request:', { action, data }); // Debug log
+    console.log('Making PHP request:', { 
+      url: PHP_API_URL,
+      action, 
+      data 
+    });
     
-    const response = await fetch(PHP_API_URL, {
+    const requestOptions = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -40,48 +50,92 @@ async function makePhpRequest(action, data) {
         'User-Agent': 'NanoStream/1.0'
       },
       body: JSON.stringify({ action, ...data }),
-      // Added timeout
-      timeout: 30000,
-      // SSL verification options
-      rejectUnauthorized: false,
-      agent: new (require('https').Agent)({
-        rejectUnauthorized: false
-      })
-    });
+      agent: httpsAgent,
+      timeout: 30000
+    };
+
+    console.log('Request options:', requestOptions);
+    
+    const response = await fetch(PHP_API_URL, requestOptions);
     
     // Get raw text first
     const rawText = await response.text();
-    console.log('Raw PHP response:', rawText); // Debug log
+    console.log('Response status:', response.status);
+    console.log('Response headers:', response.headers);
+    console.log('Raw response:', rawText);
+    
+    // Check if response starts with HTML
+    if (rawText.trim().toLowerCase().startsWith('<html')) {
+      console.error('Received HTML response instead of JSON');
+      return { 
+        success: false, 
+        error: 'Server returned HTML instead of JSON',
+        debug_info: {
+          status: response.status,
+          headers: Object.fromEntries(response.headers),
+          rawResponse: rawText.substring(0, 500)
+        }
+      };
+    }
     
     try {
-      // Try to parse it as JSON
+      // Try to parse as JSON
       const result = JSON.parse(rawText);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
       return result;
     } catch (parseError) {
-      console.error('Failed to parse PHP response as JSON:', parseError);
-      return {
-        success: false,
-        error: `Invalid JSON response: ${rawText.substring(0, 100)}...`,
-        raw_response: rawText
+      console.error('JSON Parse Error:', parseError);
+      // Return a structured error response
+      return { 
+        success: false, 
+        error: 'Invalid JSON response',
+        debug_info: {
+          parseError: parseError.message,
+          rawResponse: rawText.substring(0, 500),
+          status: response.status,
+          headers: Object.fromEntries(response.headers)
+        }
       };
     }
   } catch (error) {
-    console.error('PHP Request Error:', error);
+    console.error('Request Error:', error);
     return { 
       success: false, 
       error: error.message,
       debug_info: {
         action,
         data,
-        timestamp: new Date().toISOString()
+        url: PHP_API_URL,
+        timestamp: new Date().toISOString(),
+        errorType: error.name,
+        errorStack: error.stack
       }
     };
   }
 }
 
+// Example registration route
+app.post('/api/register', async (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.json({ success: false, error: 'Missing required fields' });
+  }
+  
+  const result = await makePhpRequest('register', { username, password });
+  res.json(result);
+});
+
+// Example login route
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.json({ success: false, error: 'Missing required fields' });
+  }
+  
+  const result = await makePhpRequest('login', { username, password });
+  res.json(result);
+});
 class Room {
   constructor(roomId, streamerId, streamerSocketId, streamerUsername, streamTitle) {
     this.roomId = roomId;
@@ -599,9 +653,14 @@ setInterval(async () => {
 }, 30000);
 
 server.listen(PORT, () => {
-  console.log(`NanoStream server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+  // Test the connection immediately
+  makePhpRequest('ping', {}).then(result => {
+    console.log('Initial connection test result:', result);
+  }).catch(error => {
+    console.error('Initial connection test failed:', error);
+  });
 });
-
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing server...');
   
